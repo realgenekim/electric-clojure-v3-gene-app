@@ -3,18 +3,20 @@
             [hyperfiddle.electric-dom3 :as dom]
             [hyperfiddle.electric-forms0 :refer [Input]]
             [missionary.core :as m]))
-
-(e/defn MyTextarea [v]
+(e/defn MyTextarea
+  [v & {:keys [rows cols]
+        :or {rows 10 cols 50}}]
   (dom/textarea
-    (dom/props {:rows 10 :cols 50 :value v})
+    (dom/props {:rows rows :cols cols :value v})
     (dom/On "input" (fn [e] (.-value (.-target e))) v)))
 
-(e/defn LabeledTextArea [label v]
+(e/defn LabeledTextArea
+  [label v & {:keys [rows cols]
+              :as args}]
   (dom/div
-    ; stack these vertically
     (dom/div
       (dom/label (dom/props {:class "font-bold"}) (dom/text label)))
-    (MyTextarea v)))
+    (MyTextarea v args)))
 
 (e/defn Claude [a b]
   (e/server
@@ -25,9 +27,9 @@
   (e/client
     (let [
           a (dom/div (LabeledTextArea "Task Prompt" "a"))
-          b (dom/div (LabeledTextArea "Task Context" "b"))
+          b (dom/div (LabeledTextArea "Task Context" "b" :rows 4))
           c (dom/div (LabeledTextArea "Project Context" "c"))
-          d (dom/div (LabeledTextArea "Project Context" "d"))
+          d (dom/div (LabeledTextArea "Project Context" "d" :rows 4))
           z (let [e  (dom/div
                        (dom/button
                          (dom/props {:class "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"})
