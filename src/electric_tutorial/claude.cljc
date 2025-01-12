@@ -9,6 +9,13 @@
     (dom/props {:rows 10 :cols 50 :value v})
     (dom/On "input" (fn [e] (.-value (.-target e))) v)))
 
+(e/defn LabeledTextArea [label v]
+  (dom/div
+    ; stack these vertically
+    (dom/div
+      (dom/label (dom/props {:class "font-bold"}) (dom/text label)))
+    (MyTextarea v)))
+
 (e/defn Claude [a b]
   (e/server
     (case (e/Task (m/sleep 50))
@@ -17,9 +24,11 @@
 (e/defn Gene []
   (e/client
     (let [
-          a (dom/div (MyTextarea "a"))
-          b (dom/div (MyTextarea "b"))
-          c (let [e  (dom/div
+          a (dom/div (LabeledTextArea "Task Prompt" "a"))
+          b (dom/div (LabeledTextArea "Task Context" "b"))
+          c (dom/div (LabeledTextArea "Project Context" "c"))
+          d (dom/div (LabeledTextArea "Project Context" "d"))
+          z (let [e  (dom/div
                        (dom/button
                          (dom/props {:class "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"})
                          (dom/text "Execute")
@@ -30,6 +39,6 @@
                 (case (reset! !c (doto (e/server (Claude a b)) prn))
                   (t)))
               (e/watch !c))]
-      a b
-      (MyTextarea (pr-str c))
-      (dom/pre (dom/text (pr-str a b c))))))
+      a b c d
+      (MyTextarea (pr-str z))
+      (dom/pre (dom/text (pr-str a b z))))))
