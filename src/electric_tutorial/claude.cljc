@@ -19,8 +19,11 @@
     (let [
           a (dom/div (MyTextarea "a"))
           b (dom/div (MyTextarea "b"))
-          c (let [e (dom/button (dom/text "click")
-                      (dom/On "click" identity nil))
+          c (let [e  (dom/div
+                       (dom/button
+                         (dom/props {:class "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"})
+                         (dom/text "Execute")
+                         (dom/On "click" identity nil)))
                   [t err] (e/Token e)
                   !c (atom nil)]
               (when t
