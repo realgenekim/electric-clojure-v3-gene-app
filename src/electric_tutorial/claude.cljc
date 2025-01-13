@@ -47,11 +47,11 @@
     (case (e/Task (m/sleep 500))
       {:a a :b b})))
 
-(declare css)
+(declare aria-css)
 
 (e/defn MyButton [F]
   (dom/button (dom/props {:class (str "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"
-                                   css)})
+                                   aria-css)})
     (dom/text "Execute")
     (let [e (dom/On "click" identity nil)
           [t err] (e/Token e)
@@ -69,7 +69,7 @@
 
 (e/defn Gene []
   (e/client
-    (dom/style (dom/text css))
+    (dom/style (dom/text aria-css))
     (dom/div {:class "container mx-auto p-8"}
       (dom/div (dom/props {:class "flex gap-8"})
         (let [[a b c d :as form]
@@ -86,7 +86,7 @@
 
             (dom/pre (dom/text (pr-str a b c d)))))))))
 
-(def css
+(def aria-css
   (str
     "disabled:opacity-50 "
     "aria-[busy=true]:bg-yellow-400 "
