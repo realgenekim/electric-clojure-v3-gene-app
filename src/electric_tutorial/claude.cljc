@@ -12,6 +12,19 @@
     ; this returns a stream of values
     (dom/On "input" (fn [e] (.-value (.-target e))) v)))
 
+(e/defn MyTextareaAtom
+  [v atm & {:keys [rows cols]
+            :or {rows 10 cols 50}}]
+  (dom/textarea
+    (dom/props {:rows rows :cols cols :value v})
+    ; this returns a stream of values
+    (dom/On "input"
+      (fn [e]
+        (let [v (.-value (.-target e))]
+          (reset! atm v)
+          v))
+      v)))
+
 (e/defn LabeledTextArea
   [label v & {:keys [rows cols]
               :as args}]
@@ -19,6 +32,14 @@
     (dom/div
       (dom/label (dom/props {:class "font-bold"}) (dom/text label)))
     (MyTextarea v args)))
+
+(e/defn LabeledTextAreaAtom
+  [label v atm & {:keys [rows cols]
+                  :as args}]
+  (dom/div
+    (dom/div
+      (dom/label (dom/props {:class "font-bold"}) (dom/text label)))
+    (MyTextareaAtom v atm args)))
 
 (e/defn Claude [a b c d]
   (e/server
@@ -39,6 +60,8 @@
 
 (declare css)
 
+(defonce !a (atom "a"))
+
 (e/defn Gene []
   (e/client
     (dom/style (dom/text css))
@@ -46,7 +69,7 @@
       (dom/div (dom/props {:class "flex"})
         (let [[a b c d :as form]
               (dom/div (dom/props {:class "w-1/2"})
-                (dom/div [(LabeledTextArea "Task Prompt" "a")
+                (dom/div [(LabeledTextAreaAtom "Task Prompt" (e/watch !a) !a)
                           (LabeledTextArea "Task Context" "b" :rows 4)
                           (LabeledTextArea "Project Context" "c")
                           (LabeledTextArea "Project Context" "d" :rows 4)]))]
@@ -63,3 +86,4 @@
 [aria-invalid=true] {background-color: pink;}")
 
 1
+2
