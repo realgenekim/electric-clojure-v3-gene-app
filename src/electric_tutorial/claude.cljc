@@ -51,14 +51,16 @@
 (declare aria-css)
 
 (e/defn MyButton [F !c]
-  " F is function to call on server
-    !c is the atom to store the result -- initialize to nil "
+  " A reactive button component that executes a server-side function F and stores its result in the !c atom.
+
+    F is function to call on server
+    !c is the atom to store the result -- initialize to nil
+    "
   (dom/button (dom/props {:class (str "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"
                                    aria-css)})
     (dom/text "Execute")
     (let [e (dom/On "click" identity nil)
           [t err] (e/Token e)]
-          ;!c (atom nil)]
       (dom/props {:aria-busy (some? t) :disabled (some? t) :aria-invalid (some? err)})
       (when t
         (case (reset! !c (e/server (F)))
