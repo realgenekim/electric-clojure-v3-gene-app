@@ -32,12 +32,12 @@
         (dom/div (A) )
         (dom/div (B))
         (dom/div (C))
-        (dom/div (D)))
+        (dom/div (D))
+        (Z))
       (dom/div
         (dom/props {:class "w-1/2"})
-        (dom/text "abc")))))
-        ;(dom/props {:class "w-1/2"})
-        ;(MyTextarea (pr-str z))
+        (dom/text "abc")
+        (MyTextarea (pr-str (Z)))))))
         ;(dom/pre (dom/text (pr-str a b z)))))))
 
 (e/defn Gene []
@@ -48,18 +48,19 @@
             b (e/fn [] (LabeledTextArea "Task Context" "b" :rows 4))
             c (e/fn [] (LabeledTextArea "Project Context" "c"))
             d (e/fn [] (LabeledTextArea "Project Context" "d" :rows 4))
-            #_z #_(let [e  (dom/div
-                         (dom/button
-                           (dom/props {:class "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"})
-                           (dom/text "Execute")
-                           (dom/On "click" identity nil)))
-                    [t err] (e/Token e)
-                    !c (atom nil)]
-                (when t
-                  (case (reset! !c (doto (e/server (Claude a b)) prn))
-                    (t)))
-                (e/watch !c))]
-        (View a b c d nil)))))
+            z (e/fn []
+                (let [e  (dom/div
+                           (dom/button
+                             (dom/props {:class "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"})
+                             (dom/text "Execute")
+                             (dom/On "click" identity nil)))
+                      [t err] (e/Token e)
+                      !c (atom nil)]
+                  (when t
+                    (case (reset! !c (doto (e/server (Claude (a) (b))) prn))
+                      (t)))
+                  (e/watch !c)))]
+        (View a b c d z)))))
         #_(dom/div
           (dom/props {:class "flex"})
           (dom/div
