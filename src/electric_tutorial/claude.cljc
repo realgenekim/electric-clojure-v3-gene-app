@@ -45,17 +45,20 @@
 (e/defn Claude [a b c d]
   (e/server
     (case (e/Task (m/sleep 500))
-      {:a a :b b})))
+      (let [retval {:a a :b b :c c :d d}]
+        retval))))
 
 (declare aria-css)
 
-(e/defn MyButton [F]
+(e/defn MyButton [F !c]
+  " F is function to call on server
+    !c is the atom to store the result -- initialize to nil "
   (dom/button (dom/props {:class (str "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"
                                    aria-css)})
     (dom/text "Execute")
     (let [e (dom/On "click" identity nil)
-          [t err] (e/Token e)
-          !c (atom nil)]
+          [t err] (e/Token e)]
+          ;!c (atom nil)]
       (dom/props {:aria-busy (some? t) :disabled (some? t) :aria-invalid (some? err)})
       (when t
         (case (reset! !c (e/server (F)))
@@ -66,6 +69,8 @@
 (defonce !b (atom "b"))
 (defonce !c (atom "c"))
 (defonce !d (atom "d"))
+
+(defonce !z (atom nil))
 
 (e/defn Gene []
   (e/client
@@ -78,9 +83,10 @@
                           (LabeledTextAreaAtom "Task Context" !b :rows 4)
                           (LabeledTextAreaAtom "Project Context" !c)
                           (LabeledTextAreaAtom "Project Context" !d :rows 4)]))]
+          ; this is needed to force evaluation of the elements
           a b c d
           (dom/div (dom/props {:class "w-1/2 border rounded-lg p-6 shadow-md"})
-            (let [z (MyButton (e/fn [] (Claude a b c d)))]
+            (let [z (MyButton (e/fn [] (Claude a b c d)) !z)]
               (dom/text "Claude result")
               (MyTextarea (pr-str z)))
 
@@ -91,3 +97,5 @@
     "disabled:opacity-50 "
     "aria-[busy=true]:bg-yellow-400 "
     "aria-[invalid=true]:bg-pink-400"))
+
+1
