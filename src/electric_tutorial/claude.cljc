@@ -3,6 +3,7 @@
             [hyperfiddle.electric-dom3 :as dom]
             [hyperfiddle.electric-forms0 :refer [Input]]
             [missionary.core :as m]))
+
 (e/defn MyTextarea
   [v & {:keys [rows cols]
         :or {rows 10 cols 50}}]
@@ -21,44 +22,44 @@
 
 (e/defn Claude [a b c d]
   (e/server
-    (case (e/Task (m/sleep 50))
+    (case (e/Task (m/sleep 500))
       {:a a :b b})))
 
-(e/defn View [A B C D Z]
-  (e/client
-    (dom/div (dom/props {:class "flex"})
-      (let [[a b c d] (dom/div (dom/props {:class "w-1/2"})
-                        (dom/div [(A) (B) (C) (D)]))]
-        ;(+ a b c d)
-        a b c d
-        (dom/div (dom/props {:class "w-1/2"})
-          (let [z (Z a b c d)]
-            z
+(e/defn MyButton [F]
+  (dom/button (dom/props {:class "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"})
+    (dom/text "Execute")
+    (let [e (dom/On "click" identity nil)
+          [t err] (e/Token e)
+          !c (atom nil)]
+      (dom/props {:aria-busy (some? t) :disabled (some? t) :aria-invalid (some? err)})
+      (when t
+        (case (reset! !c (e/server (F)))
+          (t)))
+      (e/watch !c))))
 
-            (dom/text "Claude result")
-            (MyTextarea (pr-str z))
-
-            (dom/pre (dom/text (pr-str a b c d)))
-            (dom/pre (dom/text (pr-str z)))))))))
+(declare css)
 
 (e/defn Gene []
   (e/client
+    (dom/style (dom/text css))
     (dom/div {:class "container"}
-      (let [
-            A (e/fn [] (LabeledTextArea "Task Prompt" "a"))
-            B (e/fn [] (LabeledTextArea "Task Context" "b" :rows 4))
-            C (e/fn [] (LabeledTextArea "Project Context" "c"))
-            D (e/fn [] (LabeledTextArea "Project Context" "d" :rows 4))
-            Z (e/fn [a b c d]
-                (let [e  (dom/div
-                           (dom/button
-                             (dom/props {:class "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"})
-                             (dom/text "Execute")
-                             (dom/On "click" identity nil)))
-                      [t err] (e/Token e)
-                      !c (atom nil)]
-                  (when t
-                    (case (reset! !c (doto (e/server (Claude a b c d)) prn))
-                      (t)))
-                  (e/watch !c)))]
-        (View A B C D Z)))))
+      (dom/div (dom/props {:class "flex"})
+        (let [[a b c d :as form]
+              (dom/div (dom/props {:class "w-1/2"})
+                (dom/div [(LabeledTextArea "Task Prompt" "a")
+                          (LabeledTextArea "Task Context" "b" :rows 4)
+                          (LabeledTextArea "Project Context" "c")
+                          (LabeledTextArea "Project Context" "d" :rows 4)]))]
+          a b c d
+          (dom/div (dom/props {:class "w-1/2"})
+            (let [z (MyButton (e/fn [] (Claude a b c d)))]
+              (dom/text "Claude result")
+              (MyTextarea (pr-str z)))
+
+            (dom/pre (dom/text (pr-str a b c d)))))))))
+
+(def css "
+[aria-busy=true] {background-color: yellow;}
+[aria-invalid=true] {background-color: pink;}")
+
+1
