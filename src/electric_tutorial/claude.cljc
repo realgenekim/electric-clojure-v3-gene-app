@@ -34,20 +34,24 @@
     (MyTextarea v args)))
 
 (e/defn LabeledTextAreaAtom
-  [label v atm & {:keys [rows cols]
-                  :as args}]
-  (dom/div
+  [label atm & {:keys [rows cols]
+                :as args}]
+  (let [v (e/watch atm)]
     (dom/div
-      (dom/label (dom/props {:class "font-bold"}) (dom/text label)))
-    (MyTextareaAtom v atm args)))
+      (dom/div
+        (dom/label (dom/props {:class "font-bold"}) (dom/text label)))
+      (MyTextareaAtom v atm args))))
 
 (e/defn Claude [a b c d]
   (e/server
     (case (e/Task (m/sleep 500))
       {:a a :b b})))
 
+(declare css)
+
 (e/defn MyButton [F]
-  (dom/button (dom/props {:class "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"})
+  (dom/button (dom/props {:class (str "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"
+                                   css)})
     (dom/text "Execute")
     (let [e (dom/On "click" identity nil)
           [t err] (e/Token e)
@@ -58,32 +62,29 @@
           (t)))
       (e/watch !c))))
 
-(declare css)
-
 (defonce !a (atom "a"))
 
 (e/defn Gene []
   (e/client
     (dom/style (dom/text css))
-    (dom/div {:class "container"}
-      (dom/div (dom/props {:class "flex"})
+    (dom/div {:class "container mx-auto p-8"}
+      (dom/div (dom/props {:class "flex gap-8"})
         (let [[a b c d :as form]
-              (dom/div (dom/props {:class "w-1/2"})
-                (dom/div [(LabeledTextAreaAtom "Task Prompt" (e/watch !a) !a)
+              (dom/div (dom/props {:class "w-1/2 border rounded-lg p-6 shadow-md"})
+                (dom/div [(LabeledTextAreaAtom "Task Prompt"  !a)
                           (LabeledTextArea "Task Context" "b" :rows 4)
                           (LabeledTextArea "Project Context" "c")
                           (LabeledTextArea "Project Context" "d" :rows 4)]))]
           a b c d
-          (dom/div (dom/props {:class "w-1/2"})
+          (dom/div (dom/props {:class "w-1/2 border rounded-lg p-6 shadow-md"})
             (let [z (MyButton (e/fn [] (Claude a b c d)))]
               (dom/text "Claude result")
               (MyTextarea (pr-str z)))
 
             (dom/pre (dom/text (pr-str a b c d)))))))))
 
-(def css "
-[aria-busy=true] {background-color: yellow;}
-[aria-invalid=true] {background-color: pink;}")
-
-1
-2
+(def css
+  (str
+    "disabled:opacity-50 "
+    "aria-[busy=true]:bg-yellow-400 "
+    "aria-[invalid=true]:bg-pink-400"))
