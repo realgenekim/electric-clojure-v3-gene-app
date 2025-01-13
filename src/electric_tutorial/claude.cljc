@@ -63,6 +63,9 @@
       (e/watch !c))))
 
 (defonce !a (atom "a"))
+(defonce !b (atom "b"))
+(defonce !c (atom "c"))
+(defonce !d (atom "d"))
 
 (e/defn Gene []
   (e/client
@@ -72,9 +75,9 @@
         (let [[a b c d :as form]
               (dom/div (dom/props {:class "w-1/2 border rounded-lg p-6 shadow-md"})
                 (dom/div [(LabeledTextAreaAtom "Task Prompt"  !a)
-                          (LabeledTextArea "Task Context" "b" :rows 4)
-                          (LabeledTextArea "Project Context" "c")
-                          (LabeledTextArea "Project Context" "d" :rows 4)]))]
+                          (LabeledTextAreaAtom "Task Context" !b :rows 4)
+                          (LabeledTextAreaAtom "Project Context" !c)
+                          (LabeledTextAreaAtom "Project Context" !d :rows 4)]))]
           a b c d
           (dom/div (dom/props {:class "w-1/2 border rounded-lg p-6 shadow-md"})
             (let [z (MyButton (e/fn [] (Claude a b c d)))]
