@@ -1,7 +1,7 @@
 (ns electric-tutorial.claude
   (:require
-    #?(:clj
-        [genek.claude :as gclaude])
+    [electric-tutorial.utils :as u]
+    #?(:clj [genek.claude :as gclaude])
     [hyperfiddle.electric3 :as e]
     [hyperfiddle.electric-dom3 :as dom]
     [hyperfiddle.electric-forms0 :refer [Input]]
@@ -108,6 +108,11 @@
 
 (defonce !summary (atom nil))
 
+(e/defn split-and-fmt-single-string [s width]
+  ;(u/split-and-fmt-single-string s width)
+  (u/split-on-newlines s))
+  ;"abcdef")
+
 (e/defn Gene []
   (e/client
     (dom/style (dom/text aria-css))
@@ -129,10 +134,27 @@
 
             ; TODO: for Dustin
             ; I have to copy this into a global atom, to render it outside of the div
-            (dom/pre (dom/text (pr-str a b c d))))))
+            (dom/pre (dom/text (pr-str a b c d)))
+            (println a))))
 
       (dom/div (dom/props {:class "p-8"})
-        (dom/text (e/watch !summary))))))
+        (let [v (e/watch !summary)]
+          (->> [1 2 3]
+            (map (e/fn [x]
+                   (dom/p (dom/text (str x)))))))))))
+
+
+
+(comment
+  ;(dom/p (dom/text "Summary"))
+  ;(dom/p (dom/text "Summary"))
+  (dom/ul
+    (e/for [x [1 2]]
+      (dom/li (dom/text (str x)))))
+  #_(->> "abc\ndef"
+      (split-and-fmt-single-string 80)
+      (map (e/fn [x]
+             (dom/p (dom/text x))))))
 
 (def aria-css
   (str
