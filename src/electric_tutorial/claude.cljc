@@ -1,22 +1,28 @@
 (ns electric-tutorial.claude
-  (:require [hyperfiddle.electric3 :as e]
-            [hyperfiddle.electric-dom3 :as dom]
-            [hyperfiddle.electric-forms0 :refer [Input]]
-            [missionary.core :as m]))
+  (:require
+    #?(:clj
+        [genek.claude :as gclaude])
+    [hyperfiddle.electric3 :as e]
+    [hyperfiddle.electric-dom3 :as dom]
+    [hyperfiddle.electric-forms0 :refer [Input]]
+    [missionary.core :as m]))
 
 (e/defn MyTextarea
   [v & {:keys [rows cols]
         :or {rows 10 cols 50}}]
-  (dom/textarea
-    (dom/props {:rows rows :cols cols :value v})
-    ; this returns a stream of values
-    (dom/On "input" (fn [e] (.-value (.-target e))) v)))
+  (let [newv (if (string? v) v (str v))]
+    (dom/textarea
+      (dom/props {:rows rows :cols cols :value newv
+                  :class "w-full"})
+      ; this returns a stream of values
+      (dom/On "input" (fn [e] (.-value (.-target e))) v))))
 
 (e/defn MyTextareaAtom
   [v atm & {:keys [rows cols]
             :or {rows 10 cols 50}}]
   (dom/textarea
-    (dom/props {:rows rows :cols cols :value v})
+    (dom/props {:rows rows :cols cols :value v
+                :class "w-full"})
     ; this returns a stream of values
     (dom/On "input"
       (fn [e]
@@ -44,9 +50,12 @@
 
 (e/defn Claude [a b c d]
   (e/server
-    (case (e/Task (m/sleep 500))
-      (let [retval {:a a :b b :c c :d d}]
-        retval))))
+    ;(case (e/Task (m/sleep 500)))
+    (let [
+          retval {:a a :b b :c c :d d}
+          retval (gclaude/call-claude a)]
+      (def RETVAL retval)
+      retval)))
 
 (declare aria-css)
 
@@ -90,7 +99,7 @@
           (dom/div (dom/props {:class "w-1/2 border rounded-lg p-6 shadow-md"})
             (let [z (MyButton (e/fn [] (Claude a b c d)) !z)]
               (dom/text "Claude result")
-              (MyTextarea (pr-str z)))
+              (MyTextarea z :rows 30))
 
             (dom/pre (dom/text (pr-str a b c d)))))))))
 
