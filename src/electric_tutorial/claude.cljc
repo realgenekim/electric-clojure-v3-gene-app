@@ -48,14 +48,37 @@
         (dom/label (dom/props {:class "font-bold"}) (dom/text label)))
       (MyTextareaAtom v atm args))))
 
+(defonce !claude-output (atom []))
+
 (e/defn Claude [a b c d]
   (e/server
     ;(case (e/Task (m/sleep 500)))
-    (let [
+    (let [prompt (str
+                   "Task Prompt: " a "\n\n"
+                   "Task Context: " b "\n\n"
+                   "Project Prompt: " c "\n\n"
+                   "Project Context: " d "\n\n")
           retval {:a a :b b :c c :d d}
-          retval (gclaude/call-claude a)]
+          retval (gclaude/call-claude prompt)
+          save {:prompt prompt
+                :claude-response retval
+                :inputs {:a a :b b :c c :d d}}]
       (def RETVAL retval)
+      (swap! !claude-output conj save)
+      (e/client
+        (reset! !claude-output save))
       retval)))
+
+(comment
+  @!claude-output
+  (count @!claude-output)
+
+  ; pretty print
+  (spit "save-prompt.edn" (with-out-str (clojure.pprint/pprint @!claude-output)))
+
+  0)
+
+(e/defn CopyEntireConversation [a b c d z])
 
 (declare aria-css)
 
