@@ -89,16 +89,16 @@
   (e/client
     (dom/style (dom/text aria-css))
     (dom/div {:class "container mx-auto p-8"}
-      (dom/div (dom/props {:class "flex gap-8"})
+      (dom/div (dom/props {:class "flex gap-2"})
         (let [[a b c d :as form]
-              (dom/div (dom/props {:class "w-1/2 border rounded-lg p-6 shadow-md"})
+              (dom/div (dom/props {:class "w-1/2 border rounded-lg p-2 shadow-md"})
                 (dom/div [(LabeledTextAreaAtom "Task Prompt"  !a)
                           (LabeledTextAreaAtom "Task Context" !b :rows 4)
                           (LabeledTextAreaAtom "Project Context" !c)
                           (LabeledTextAreaAtom "Project Context" !d :rows 4)]))]
           ; this is needed to force evaluation of the elements
           a b c d
-          (dom/div (dom/props {:class "w-1/2 border rounded-lg p-6 shadow-md"})
+          (dom/div (dom/props {:class "w-1/2 border rounded-lg p-2 shadow-md"})
             (let [z (MyButton (e/fn [] (Claude a b c d)) !z)]
               (reset! !summary (pr-str a b c d))
               (dom/div
