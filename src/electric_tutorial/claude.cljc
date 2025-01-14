@@ -147,9 +147,14 @@
         ;(let [vsum (e/watch !summary)
         (let [vsum (e/watch !claude-output)
               ;v "line 1\nline 2"]
-              v vsum]
-          (dom/pre (dom/text (u/split-and-fmt-single-string (-> v :claude-response) 80))))))))
+              v vsum
+              vamb (u/split-on-newlines (-> v :claude-response))]
+          (e/for [x (e/diff-by identity vamb)]
+            (dom/p
+              (dom/props {:class "mb-4"})
+              (dom/text x))))))))
 
+1
 
 
 (comment
