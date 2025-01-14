@@ -50,20 +50,25 @@
 
 (defonce !claude-output (atom []))
 
+(defn create-prompt [a b c d]
+  (let [prompt (str
+                 "Task Prompt: " a "\n\n"
+                 "Task Context: " b "\n\n"
+                 "Project Prompt: " c "\n\n"
+                 "Project Context: " d "\n\n")
+        inputs {:a a :b b :c c :d d}]
+    {:prompt prompt
+     :inputs inputs}))
+
+
 (e/defn Claude [a b c d]
   (e/server
     ;(case (e/Task (m/sleep 500)))
-    (let [prompt (str
-                   "Task Prompt: " a "\n\n"
-                   "Task Context: " b "\n\n"
-                   "Project Prompt: " c "\n\n"
-                   "Project Context: " d "\n\n")
-          retval {:a a :b b :c c :d d}
-          retval (gclaude/call-claude prompt)
-          save {:prompt prompt
-                :claude-response retval
-                :inputs {:a a :b b :c c :d d}}]
+    (let [prompt-data (create-prompt a b c d)
+          retval (gclaude/call-claude (:prompt prompt-data))
+          save (assoc prompt-data :claude-response retval)]
       (def RETVAL retval)
+      (def SAVEPROMPT save)
       (swap! !claude-output conj save)
       (e/client
         (reset! !claude-output save))
@@ -128,6 +133,7 @@
           a b c d
           (dom/div (dom/props {:class "w-1/2 border rounded-lg p-2 shadow-md"})
             (let [z (MyButton (e/fn [] (Claude a b c d)) !z)]
+              ;(reset! !summary (pr-str a b c d))
               (reset! !summary (pr-str a b c d))
               (dom/div
                 (MyTextarea z :rows 30)))
@@ -138,23 +144,32 @@
             (println a))))
 
       (dom/div (dom/props {:class "p-8"})
-        (let [v (e/watch !summary)]
-          (->> [1 2 3]
-            (map (e/fn [x]
-                   (dom/p (dom/text (str x)))))))))))
+        ;(let [vsum (e/watch !summary)
+        (let [vsum (e/watch !claude-output)
+              ;v "line 1\nline 2"]
+              v vsum]
+          (dom/pre (dom/text (u/split-and-fmt-single-string (-> v :claude-response) 80))))))))
 
 
 
 (comment
-  ;(dom/p (dom/text "Summary"))
-  ;(dom/p (dom/text "Summary"))
+  ; this works
+  ; (e/for [x (e/amb 1 2 3)]
+  ;          (dom/p (dom/text (str x))))
+
+  (u/split-and-fmt-single-string "abc\ndef" 80)
+  (->> [1 2 3]
+    (map (e/fn [x]
+           (dom/p (dom/text (str x))))))
   (dom/ul
-    (e/for [x [1 2]]
+    (e/for [x [1 2 3 4]]
       (dom/li (dom/text (str x)))))
-  #_(->> "abc\ndef"
-      (split-and-fmt-single-string 80)
-      (map (e/fn [x]
-             (dom/p (dom/text x))))))
+  ;(dom/p (dom/text "Summary"))
+  ;(dom/p (dom/text "Summary"))
+  (->> "abc\ndef"
+    (split-and-fmt-single-string 80)
+    (map (e/fn [x]
+           (dom/p (dom/text x))))))
 
 (def aria-css
   (str
