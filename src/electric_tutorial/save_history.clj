@@ -1,9 +1,24 @@
 (ns electric-tutorial.save-history
   (:require
     [electric-tutorial.claude :as c]
+    [clojure.edn :as edn]
     [electric-tutorial.utils :as u]))
 
+(defn load-history!
+  []
+  (let [s (-> (slurp "save-prompt.edn")
+            (edn/read-string))]
+    s))
 
+(defn load-latest-history!
+  []
+  (->> (load-history!)
+    (last)))
+
+(comment
+  (load-history!)
+  (load-latest-history!)
+  0)
 
 
 
@@ -11,6 +26,13 @@
   (do
     @c/!claude-output)
   (count @c/!claude-output)
+
+  ; use this
+  (->> @c/!claude-output
+    (last)
+    (#(with-out-str
+        (clojure.pprint/pprint %)))
+    (spit "save-prompt.edn"))
 
   (spit "save-prompt.edn"
     (with-out-str
