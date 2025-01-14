@@ -83,6 +83,8 @@
 
 (defonce !z (atom nil))
 
+(defonce !summary (atom nil))
+
 (e/defn Gene []
   (e/client
     (dom/style (dom/text aria-css))
@@ -98,10 +100,16 @@
           a b c d
           (dom/div (dom/props {:class "w-1/2 border rounded-lg p-6 shadow-md"})
             (let [z (MyButton (e/fn [] (Claude a b c d)) !z)]
-              (dom/text "Claude result")
-              (MyTextarea z :rows 30))
+              (reset! !summary (pr-str a b c d))
+              (dom/div
+                (MyTextarea z :rows 30)))
 
-            (dom/pre (dom/text (pr-str a b c d)))))))))
+            ; TODO: for Dustin
+            ; I have to copy this into a global atom, to render it outside of the div
+            (dom/pre (dom/text (pr-str a b c d))))))
+
+      (dom/div (dom/props {:class "p-8"})
+        (dom/text (e/watch !summary))))))
 
 (def aria-css
   (str
