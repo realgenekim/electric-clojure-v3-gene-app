@@ -1,14 +1,15 @@
 (ns electric-tutorial.save-history
   (:require
-    [electric-tutorial.claude :as c]
+    ;[electric-tutorial.claude :as c]
     [clojure.edn :as edn]
     [electric-tutorial.utils :as u]))
 
 (defn load-history!
   []
-  (let [s (-> (slurp "save-prompt.edn")
-            (edn/read-string))]
-    s))
+  (let [ret (->> (slurp "save-prompt.edn")
+              (edn/read-string)
+              (remove #(= (-> % :inputs :a) "a")))]
+    ret))
 
 (defn load-latest-history!
   []
@@ -18,18 +19,20 @@
 (comment
   (load-history!)
   (load-latest-history!)
+
+  (->> (load-latest-history!)
+    (spit "chop-book-prompt.edn"))
   0)
 
 
 
 (comment
   (do
-    @c/!claude-output)
-  (count @c/!claude-output)
+    @electric-tutorial.claude/!claude-output)
+  (count @electric-tutorial.claude/!claude-output)
 
   ; use this
   (->> @c/!claude-output
-    (last)
     (#(with-out-str
         (clojure.pprint/pprint %)))
     (spit "save-prompt.edn"))

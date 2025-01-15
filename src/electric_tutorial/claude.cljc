@@ -2,6 +2,7 @@
   (:require
     [electric-tutorial.utils :as u]
     #?(:clj [genek.claude :as gclaude])
+    #?(:clj [electric-tutorial.save-history :as history])
     [hyperfiddle.electric3 :as e]
     [hyperfiddle.electric-dom3 :as dom]
     [hyperfiddle.electric-forms0 :refer [Input]]
@@ -74,12 +75,32 @@
         (reset! !claude-output save))
       retval)))
 
+(defonce !a (atom "a"))
+(defonce !b (atom "b"))
+(defonce !c (atom "c"))
+(defonce !d (atom "d"))
+
+(defonce !z (atom nil))
+
+(e/defn LoadLastPrompts []
+  (e/server
+    #_(e/client
+        (reset! !a "xxx"))
+    (let [saved (history/load-latest-history!)
+          _ (println :loading!)]
+      (e/client
+        (println :LoadLastPrompts :saved saved)
+        (println :LoadLastPrompts :a (-> saved :inputs))
+        (reset! !z (-> saved :claude-response))
+        (reset! !a (-> saved :inputs :a))
+        (reset! !b (-> saved :inputs :b))
+        (reset! !c (-> saved :inputs :c))
+        (reset! !d (-> saved :inputs :d)))
+      saved)))
+
 (comment
   @!claude-output
   (count @!claude-output)
-
-  ; pretty print
-  (spit "save-prompt.edn" (with-out-str (clojure.pprint/pprint @!claude-output)))
 
   0)
 
@@ -87,7 +108,7 @@
 
 (declare aria-css)
 
-(e/defn MyButton [F !c]
+(e/defn MyButton [label F !c]
   " A reactive button component that executes a server-side function F and stores its result in the !c atom.
 
     F is function to call on server
@@ -95,7 +116,7 @@
     "
   (dom/button (dom/props {:class (str "bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-2 rounded"
                                    aria-css)})
-    (dom/text "Execute")
+    (dom/text label)
     (let [e (dom/On "click" identity nil)
           [t err] (e/Token e)]
       (dom/props {:aria-busy (some? t) :disabled (some? t) :aria-invalid (some? err)})
@@ -104,12 +125,7 @@
           (t)))
       (e/watch !c))))
 
-(defonce !a (atom "a"))
-(defonce !b (atom "b"))
-(defonce !c (atom "c"))
-(defonce !d (atom "d"))
 
-(defonce !z (atom nil))
 
 (defonce !summary (atom nil))
 
@@ -120,6 +136,7 @@
 
 (e/defn Gene []
   (e/client
+    (e/watch !a)
     (dom/style (dom/text aria-css))
     (dom/div {:class "container mx-auto p-8"}
       (dom/div (dom/props {:class "flex gap-2"})
@@ -132,8 +149,11 @@
           ; this is needed to force evaluation of the elements
           a b c d
           (dom/div (dom/props {:class "w-1/2 border rounded-lg p-2 shadow-md"})
-            (let [z (MyButton (e/fn [] (Claude a b c d)) !z)]
+            (let [z (MyButton "Execute" (e/fn []  (Claude a b c d))  !z)
+                  *load (MyButton "Load Last" (e/fn [] (LoadLastPrompts)) !z)]
               ;(reset! !summary (pr-str a b c d))
+              z
+              *load
               (reset! !summary (pr-str a b c d))
               (dom/div
                 (MyTextarea z :rows 30)))
