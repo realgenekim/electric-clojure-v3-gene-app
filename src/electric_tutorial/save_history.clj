@@ -8,7 +8,9 @@
   []
   (let [ret (->> (slurp "save-prompt.edn")
               (edn/read-string)
-              (remove #(= (-> % :inputs :a) "a")))]
+              (remove #(= (-> % :inputs :a) "a"))
+              (map-indexed (fn [idx itm]
+                             (assoc itm :id idx))))]
     ret))
 
 (defn load-latest-history!

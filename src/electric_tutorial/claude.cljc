@@ -183,6 +183,8 @@
         ; I have to copy this into a global atom, to render it outside of the div
         (dom/pre (dom/text (pr-str a b c d)))
         (println a)))
+
+    ; summary area at bottom
     (dom/div (dom/props {:class "p-8"})
       ;(let [vsum (e/watch !summary)
       (let [vsum (e/watch !claude-output)
@@ -194,6 +196,22 @@
             (dom/props {:class "mb-4"})
             (dom/text x)))))))
 
+(e/defn PromptsView []
+  ; load the last saved prompts
+  (dom/div (dom/text "Prompts View")
+    (e/server
+      (let [prompts (history/load-history!)]
+        (dom/table
+          (dom/props {:class "table-fixed w-full"})
+          (e/client
+            (println :prompts prompts)
+            (e/for [p (e/diff-by :id prompts)]
+              (println 'rendering p #_v)
+              (dom/tr
+                (dom/td (dom/props {:class "align-top max-w-screen"}) (dom/text (-> p :id)))
+                (dom/td (dom/props {:class "align-top max-w-screen"}) (dom/text (-> p :inputs)))
+                (dom/td (dom/props {:class "align-top max-w-screen"}) (dom/text (-> p :claude-response)))))))))))
+
 (e/defn Gene []
   (e/client
     (dom/style (dom/text aria-css))
@@ -202,7 +220,7 @@
       (if (= :claude-view (e/watch !view-mode))
         (ClaudeView)
         ; else
-        (dom/div (dom/text "Prompts View"))))))
+        (PromptsView)))))
 
 1
 
