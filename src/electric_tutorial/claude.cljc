@@ -147,17 +147,52 @@
         (dom/button (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
           (dom/text "Claude")
           (dom/On "click" (fn [x]
-                            (let [new-mode (if (= view-mode :claude-view)
-                                             :prompts-view
-                                             :claude-view)]
                               (println :claude-view :click!)
-                              (reset! !view-mode new-mode)))
-            ;(reset! !view-mode new-mode)))
+                              (reset! !view-mode :claude-view))
             nil))
-        (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
+        (dom/button (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
+          (dom/On "click" (fn [x]
+                            (println :prompts-view :click!)
+                            (reset! !view-mode :prompts-view))
+            nil)
           (dom/text  "Saved Prompts"))
         (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
           (dom/text (str "View Mode: " (e/watch !view-mode))))))))
+
+(e/defn ClaudeView []
+  (dom/div (dom/props {:class "flex gap-2"})
+    (let [[a b c d :as form]
+          (dom/div (dom/props {:class "w-1/2 border rounded-lg p-2 shadow-md"})
+            (dom/div [(LabeledTextAreaAtom "Task Prompt"  !a)
+                      (LabeledTextAreaAtom "Task Context" !b :rows 4)
+                      (LabeledTextAreaAtom "Project Context" !c)
+                      (LabeledTextAreaAtom "Project Context" !d :rows 4)]))]
+      ; this is needed to force evaluation of the elements
+      a b c d
+      (dom/div (dom/props {:class "w-1/2 border rounded-lg p-2 shadow-md"})
+        (let [z (MyButton "Execute" (e/fn []  (Claude a b c d))  !z)
+              *load (MyButton "Load Last" (e/fn [] (LoadLastPrompts)) !z)]
+          ;(reset! !summary (pr-str a b c d))
+          z
+          *load
+          (reset! !summary (pr-str a b c d))
+          (dom/div
+            (MyTextarea z :rows 30)))
+
+        ; TODO: for Dustin
+        ; I have to copy this into a global atom, to render it outside of the div
+        (dom/pre (dom/text (pr-str a b c d)))
+        (println a)))
+    (dom/div (dom/props {:class "p-8"})
+      ;(let [vsum (e/watch !summary)
+      (let [vsum (e/watch !claude-output)
+            ;v "line 1\nline 2"]
+            v vsum
+            vamb (u/split-on-newlines (-> v :claude-response))]
+        (e/for [x (e/diff-by identity vamb)]
+          (dom/p
+            (dom/props {:class "mb-4"})
+            (dom/text x)))))))
 
 (e/defn Gene []
   (e/client
@@ -165,39 +200,7 @@
     (dom/div {:class "container mx-auto p-8"}
       (Header)
       (if (= :claude-view (e/watch !view-mode))
-        (dom/div (dom/props {:class "flex gap-2"})
-          (let [[a b c d :as form]
-                (dom/div (dom/props {:class "w-1/2 border rounded-lg p-2 shadow-md"})
-                  (dom/div [(LabeledTextAreaAtom "Task Prompt"  !a)
-                            (LabeledTextAreaAtom "Task Context" !b :rows 4)
-                            (LabeledTextAreaAtom "Project Context" !c)
-                            (LabeledTextAreaAtom "Project Context" !d :rows 4)]))]
-            ; this is needed to force evaluation of the elements
-            a b c d
-            (dom/div (dom/props {:class "w-1/2 border rounded-lg p-2 shadow-md"})
-              (let [z (MyButton "Execute" (e/fn []  (Claude a b c d))  !z)
-                    *load (MyButton "Load Last" (e/fn [] (LoadLastPrompts)) !z)]
-                ;(reset! !summary (pr-str a b c d))
-                z
-                *load
-                (reset! !summary (pr-str a b c d))
-                (dom/div
-                  (MyTextarea z :rows 30)))
-
-              ; TODO: for Dustin
-              ; I have to copy this into a global atom, to render it outside of the div
-              (dom/pre (dom/text (pr-str a b c d)))
-              (println a)))
-          (dom/div (dom/props {:class "p-8"})
-            ;(let [vsum (e/watch !summary)
-            (let [vsum (e/watch !claude-output)
-                  ;v "line 1\nline 2"]
-                  v vsum
-                  vamb (u/split-on-newlines (-> v :claude-response))]
-              (e/for [x (e/diff-by identity vamb)]
-                (dom/p
-                  (dom/props {:class "mb-4"})
-                  (dom/text x))))))
+        (ClaudeView)
         ; else
         (dom/div (dom/text "Prompts View"))))))
 
