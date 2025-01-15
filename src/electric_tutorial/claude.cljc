@@ -134,17 +134,32 @@
   (u/split-on-newlines s))
   ;"abcdef")
 
+(defonce !view-mode (atom :claude-view))
+
+(comment
+  (def !view-mode (atom :claude-view))
+  0)
+
+(e/defn Header []
+  (dom/div
+    (dom/span (dom/props {:class "flex gap-2 mb-4"})
+      (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
+        (dom/text "Claude")
+        (dom/On "click" #(do
+                           (println :claude-view :click!)
+                           (reset! !view-mode :claude-view))
+                            ;(reset! !view-mode new-mode)))
+          nil))
+      (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
+        (dom/text  "Saved Prompts"))
+      (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
+        (dom/text (str "View Mode: " (e/watch !view-mode)))))))
+
 (e/defn Gene []
   (e/client
-    (e/watch !a)
     (dom/style (dom/text aria-css))
     (dom/div {:class "container mx-auto p-8"}
-      (dom/span (dom/props {:class "flex gap-2 mb-4"})
-        (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
-          (dom/text "Claude")
-          (dom/On "click" #(println :claude-view :click!) nil))
-        (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
-          (dom/text  "Saved Prompts")))
+      (Header)
       (dom/div (dom/props {:class "flex gap-2"})
         (let [[a b c d :as form]
               (dom/div (dom/props {:class "w-1/2 border rounded-lg p-2 shadow-md"})
