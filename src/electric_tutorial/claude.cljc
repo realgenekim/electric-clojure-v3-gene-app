@@ -141,7 +141,8 @@
     (dom/div {:class "container mx-auto p-8"}
       (dom/span (dom/props {:class "flex gap-2 mb-4"})
         (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
-          (dom/text "Claude"))
+          (dom/text "Claude")
+          (dom/On "click" #(println :claude-view :click!) nil))
         (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
           (dom/text  "Saved Prompts")))
       (dom/div (dom/props {:class "flex gap-2"})
