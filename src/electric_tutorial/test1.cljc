@@ -7,10 +7,16 @@
     (dom/div
       (dom/text "abc")))
 
+(defonce !text1 (atom "t1"))
+(defonce !text2 (atom "t2"))
+(defonce !result (atom "t3"))
+
+
 (e/defn TextConcat []
-  (let [!text1  (atom "")
-        !text2  (atom "")
-        !result (atom "")
+  (let [
+        ;!text1  (atom "")
+        ;!text2  (atom "")
+        ;!result (atom "")
         text1   (e/watch !text1)
         text2   (e/watch !text2)
         result  (e/watch !result)]
@@ -27,7 +33,10 @@
           (dom/props {:style {:height        "10rem"
                               :padding       "0.5rem"
                               :border        "1px solid #ccc"
-                              :border-radius "4px"}})
+                              :border-radius "4px"}
+                      :value text1})
+
+
           (dom/On "input" (fn [e] (reset! !text1 (.. e -target -value)))
             nil))
 
@@ -35,7 +44,8 @@
           (dom/props {:style {:height        "10rem"
                               :padding       "0.5rem"
                               :border        "1px solid #ccc"
-                              :border-radius "4px"}})
+                              :border-radius "4px"}
+                      :value text2})
           (dom/On "input" (fn [e] (reset! !text2 (.. e -target -value)))
             nil))
 
