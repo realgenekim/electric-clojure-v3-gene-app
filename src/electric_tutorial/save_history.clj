@@ -10,7 +10,8 @@
               (edn/read-string)
               (remove #(= (-> % :inputs :a) "a"))
               (map-indexed (fn [idx itm]
-                             (assoc itm :id idx))))]
+                             (assoc itm :id idx)))
+              reverse)]
     ret))
 
 (defn load-latest-history!

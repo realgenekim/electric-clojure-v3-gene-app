@@ -1,6 +1,7 @@
 (ns electric-tutorial.utils
   (:require
-    [clojure.string :as str]))
+    [clojure.string :as str]
+    [com.fulcrologic.guardrails.core :refer [>defn =>]]))
 
 (defn fmt [s width]
   (some-> s
@@ -63,3 +64,9 @@
 
   0)
 
+
+(>defn truncate-str
+  [s n] [string? int? => string?]
+  (subs s
+    0
+    (min (count s) n)))

@@ -3,6 +3,7 @@
     [electric-tutorial.utils :as u]
     #?(:clj [genek.claude :as gclaude])
     #?(:clj [electric-tutorial.save-history :as history])
+    [electric-tutorial.test1 :as test1]
     [hyperfiddle.electric3 :as e]
     [hyperfiddle.electric-dom3 :as dom]
     [hyperfiddle.electric-forms0 :refer [Input]]
@@ -156,6 +157,12 @@
                             (reset! !view-mode :prompts-view))
             nil)
           (dom/text  "Saved Prompts"))
+        (dom/button (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
+          (dom/On "click" (fn [x]
+                            (println :test1-view :click!)
+                            (reset! !view-mode :test1-view))
+            nil)
+          (dom/text  "Test1"))
         (dom/div (dom/props {:class "flex gap-2 mb-1 text-xs border rounded p-1"})
           (dom/text (str "View Mode: " (e/watch !view-mode))))))))
 
@@ -202,25 +209,32 @@
     (e/server
       (let [prompts (history/load-history!)]
         (dom/table
-          (dom/props {:class "table-fixed w-full"})
+          (dom/props {:class "table-fixed w-full text-sm"})
           (e/client
             (println :prompts prompts)
             (e/for [p (e/diff-by :id prompts)]
               (println 'rendering p #_v)
-              (dom/tr
-                (dom/td (dom/props {:class "align-top max-w-screen"}) (dom/text (-> p :id)))
-                (dom/td (dom/props {:class "align-top max-w-screen"}) (dom/text (-> p :inputs)))
-                (dom/td (dom/props {:class "align-top max-w-screen"}) (dom/text (-> p :claude-response)))))))))))
+              (let [w 1200]
+                (dom/tr
+                  (dom/td (dom/props {:class "align-top w-20"})
+                    (dom/text (-> p :id str (u/truncate-str w))))
+                  (dom/td (dom/props {:class "align-top max-w-screen"})
+                    (dom/text (-> p :inputs str (u/truncate-str w))))
+                  (dom/td (dom/props {:class "align-top max-w-screen"})
+                    (dom/text (-> p :claude-response (u/truncate-str w)))))))))))))
 
 (e/defn Gene []
   (e/client
     (dom/style (dom/text aria-css))
     (dom/div {:class "container mx-auto p-8"}
       (Header)
-      (if (= :claude-view (e/watch !view-mode))
-        (ClaudeView)
-        ; else
-        (PromptsView)))))
+      (case (e/watch !view-mode)
+        :claude-view  (ClaudeView)
+        :prompts-view (PromptsView)
+        :test1-view   (test1/TextConcat)
+        ;; default case
+        (ClaudeView)))))
+
 
 1
 
