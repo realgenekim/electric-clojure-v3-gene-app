@@ -1,0 +1,2830 @@
+./forms_inline.cljc:
+
+(ns electric-tutorial.forms-inline ; used in form_explainer
+  (:require #?(:clj [datascript.core :as d])
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :as forms :refer
+             [Input! Checkbox! Checkbox* Form! Service try-ok effects*]]
+            [dustingetz.trivial-datascript-form :refer
+             [#?(:clj ensure-conn!) #?(:clj transact-unreliable)]]))
+
+(e/declare debug*)
+(e/declare slow*)
+(e/declare fail*)
+(e/declare show-buttons*)
+(e/declare auto-submit*)
+(e/declare !conn)
+
+(e/defn Str1FormSubmit [id v]
+  (e/server
+    (let [tx [{:db/id id :user/str1 v}]]
+      (e/Offload #(try-ok (transact-unreliable !conn tx :fail fail* :slow slow*))))))
+
+(e/defn Num1FormSubmit [id v]
+  (e/server
+    (let [tx [{:db/id id :user/num1 v}]]
+      (e/Offload #(try-ok (transact-unreliable !conn tx :fail fail* :slow slow*))))))
+
+(e/defn Bool1FormSubmit [id v]
+  (e/server
+    (let [tx [{:db/id id :user/bool1 v}]]
+      (e/Offload #(try-ok (transact-unreliable !conn tx :fail fail* :slow slow*))))))
+
+(e/defn UserForm [db id]
+  (dom/fieldset (dom/legend (dom/text "UserForm"))
+    (let [{:keys [user/str1 user/num1 user/bool1]}
+          (e/server (d/pull db [:user/str1 :user/num1 :user/bool1] id))]
+      (dom/dl
+        (e/amb
+          (dom/dt (dom/text "str1"))
+          (dom/dd (Form! (Input! :user/str1 str1)
+                    :commit (fn [{v :user/str1}]
+                              [[`Str1FormSubmit id v] ; command
+                               {id {:user/str1 v}}]) ; prediction
+                    :auto-submit auto-submit*
+                    :show-buttons show-buttons*
+                    :debug debug*))
+
+          (dom/dt (dom/text "num1"))
+          (dom/dd (Form! (Input! :user/num1 num1 :type "number" :parse parse-long)
+                    :commit (fn [{v :user/num1}]
+                              [[`Num1FormSubmit id v]
+                               {id {:user/num1 v}}])
+                    :auto-submit auto-submit*
+                    :show-buttons show-buttons*
+                    :debug debug*))
+
+          (dom/dt (dom/text "bool1"))
+          (dom/dd (Form! (Checkbox! :user/bool1 bool1)
+                    :commit (fn [{v :user/bool1}]
+                              [[`Bool1FormSubmit id v]
+                               {id {:user/bool1 v}}])
+                    :auto-submit auto-submit*
+                    :show-buttons show-buttons*
+                    :debug debug*)))))))
+
+(e/defn Forms-inline []
+  (binding [effects* {`Str1FormSubmit Str1FormSubmit
+                      `Num1FormSubmit Num1FormSubmit
+                      `Bool1FormSubmit Bool1FormSubmit}
+            debug* (Checkbox* false :label "debug")
+            slow* (Checkbox* true :label "latency")
+            fail* (Checkbox* true :label "failure")
+            show-buttons* (or (Checkbox* false :label "show-buttons") ::forms/smart)
+            auto-submit* (Checkbox* false :label "auto-submit")]
+    debug* fail* slow* auto-submit* show-buttons*
+    (binding [!conn (e/server (ensure-conn!))]
+      (let [db (e/server (e/watch !conn))]
+        (Service
+          (UserForm db 42))))))-e 
+
+
+./lifecycle.md:
+
+# Lifecycle <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+mount/unmount component lifecycle
+
+!ns[electric-tutorial.lifecycle/Lifecycle]()
+
+What's happening
+
+* The string "blink!" is being mounted/unmounted every 2 seconds
+* The mount/unmount "component lifecycle" is logged to the browser console with `println`
+* `(BlinkerComponent)` is being constructed and destructed like an object!
+* Diffs are printed to console, let's take a look
+
+Reactive control flow
+
+* `if`, `case` and other Clojure control flow forms are reactive.
+* Here, when the predicate switches, the `when` will *switch* between branches.
+* the hidden branch is `nil`, because this is actually `clojure.core/when`, which is a macro over `if`, which Electric reinterprets as reactive.
+* In the DAG, if-nodes look like a railroad switch:
+  <p>![railroad switch](https://clojureverse.org/uploads/default/original/2X/7/7b52e4535db802fb51a368bae4461829e7c0bfe5.jpeg)</p>
+
+Electric functions have object lifecycle
+* Reactive expressions have a "mount" and "unmount" lifecycle. `println` here runs on "mount" and never again since it has only constant arguments, unless the component is destroyed and recreated.
+* `e/on-unmount` : takes a regular (non-reactive) function to run before unmount.
+* Why no `e/mount`? The `println` here runs on mount without extra syntax needed, we'd like to see a concrete use case not covered by this.
+
+**Electric fns are both functions and objects**
+* Recall that Electric exprs are auto-memoized.
+* That's a white lie - in fact, it is electric `let` which allocates the memo buffer, because that's the point at which sharing and reuse becomes possible.
+* These memo buffers can be seen as *object state*. Electric functions, that contain a let node, are in fact objects.
+* They compose as functions, they have object lifecycle, and they have state. From here on we will refer to Electric fns as both "function" or "object" as appropriate, depending on which aspects are under discussion. We also sometimes refer to "calling" Electric fns as "booting" or "mounting".
+* Electric `if` and other control flow nodes will mount and unmount their child branches (like switching the railroad track).
+* When Electric objects are eventually destroyed, the memo buffers are discarded.
+  * In other words: Electric flows are not [*history sensitive*](https://blog.janestreet.com/breaking-down-frp/). If you unmount and remount an Electric function, the past state is gone. (I hesitate to link to this article from 2014 because it contains confusion/FUD around the importance of continuous time, but the coverage of history sensitivity is good.)
+
+Dynamic extent, RAII and process
+
+* Electric objects can manage references (e.g. DOM node or atom in lexical scope).
+* A managed reference's lifetime is tied to the supervising object's lifetime.
+* Electric objects have *dynamic extent*:
+* "Dynamic extent refers to things that exist for a fixed period of time and are explicitly “destroyed” at the end of that period, usually when control returns to the code that created the thing." — from [On the Perils of Dynamic Scope (Sierra 2013)](https://stuartsierra.com/2013/03/29/perils-of-dynamic-scope)
+* Like [RAII](https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization), this lifecycle is deterministic and intended for performing resource management effects.
+
+`do` sequences effects, returning the final result (same as Clojure)
+* Reactive objects in the body are constructed in order and then run concurrently
+* so e.g. `(do (Blinker.) (Blinker.))` will boot two concurrent blinkers-e 
+
+
+./explorer.cljc:
+
+(ns electric-tutorial.explorer
+  (:require [clojure.datafy :refer [datafy]]
+            [clojure.core.protocols :refer [nav]]
+            #?(:clj clojure.java.io)
+            [contrib.assert :refer [check]]
+            [contrib.data :refer [clamp-left]]
+            [contrib.str :refer [includes-str?]]
+            [contrib.treelister :refer [treelister]]
+            [dustingetz.datafy-fs #?(:clj :as :cljs :as-alias) fs]
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric3-contrib :as ex]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer [Input*]]
+            [hyperfiddle.electric-scroll0 :refer [Scroll-window IndexRing]]
+            [hyperfiddle.router4 :as router]))
+
+(def unicode-folder "\uD83D\uDCC2") ; 📂
+(e/declare base-path)
+
+(e/defn Render-cell [?m a]
+  (e/client
+    (let [?v (e/server (a ?m))
+          dir? (e/server (= ::fs/dir (::fs/kind ?m)))
+          path (e/server (and dir? (some->> ?m ::fs/absolute-path (fs/relativize-path base-path))))]
+      path ?v dir? ; prefetch initial load - saves a blink
+      (case a
+        ::fs/name (if (and dir? path)
+                    (router/link ['.. [path]] (dom/text ?v))
+                    (dom/text (str ?v)))
+        ::fs/modified (dom/text (e/client (some-> ?v .toLocaleDateString)))
+        ::fs/kind (dom/text (if dir? unicode-folder (some-> ?v name)))
+        (dom/text (str ?v))))))
+
+(e/defn Row [i ?x]
+  (e/client
+    (let [?tab (e/server (some-> ?x (nth 0))) ; destructure on server, todo electric can auto-site this
+          ?x (e/server (some-> ?x (nth 1) datafy))]
+      (dom/tr (dom/props {:style {:--order (inc i)} :data-row-stripe (mod i 2)})
+        (dom/td (Render-cell ?x ::fs/name) (dom/props {:style {:padding-left (some-> ?tab (* 15) (str "px"))}}))
+        (dom/td (Render-cell ?x ::fs/modified))
+        (dom/td (Render-cell ?x ::fs/size))
+        (dom/td (Render-cell ?x ::fs/kind))))))
+
+(e/defn TableScroll [record-count xs!]
+  (e/server
+    (dom/props {:class "Viewport"})
+    (let [row-height 24
+          [offset limit] (Scroll-window row-height record-count dom/node {:overquery-factor 1})]
+      (dom/table (dom/props {:style {:position "relative" :top (str (* offset row-height) "px")}})
+        (e/for [i (IndexRing limit offset)] ; render all rows even with fewer elements
+          (Row i (e/server (nth xs! i nil)))))
+      (dom/div (dom/props {:style {:height (str (clamp-left ; row count can exceed record count
+                                                  (* row-height (- record-count limit)) 0) "px")}})))))
+
+(defn hidden-or-node-modules [m] (or (::fs/hidden m) (= "node_modules" (::fs/name m))))
+
+(e/defn Dir [x]
+  (e/server
+    (let [!search (atom "") search (e/watch !search)
+          m (datafy x)
+          xs! #_((fn [] (apply nil [])))
+          (vec ((treelister
+                  ; search over 10k+ records is too slow w/o a search index, so remove node_modules and .git
+                  (fn children [m] (if (not (hidden-or-node-modules m)) (nav m ::fs/children (::fs/children m))))
+                  (fn keep? [m search] (and (not (hidden-or-node-modules m)) (includes-str? (::fs/name m) search)))
+                  (nav m ::fs/children (::fs/children m))) search))
+          n (count xs!)]
+      (dom/fieldset (dom/legend (dom/text (::fs/absolute-path m) " ")
+                      (do (reset! !search (e/client (Input* ""))) nil) (dom/text " (" n " items)"))
+        (dom/div ; viewport is underneath the dom/legend and must have pixel perfect height
+          (TableScroll n xs!))))))
+
+(declare css)
+(e/defn DirectoryExplorer []
+  (dom/style (dom/text css))
+  (dom/div (dom/props {:class "DirectoryExplorer"})
+    (let [[fs-rel-path] router/route]
+      (if-not fs-rel-path
+        (router/ReplaceState! ['. [""]])
+        (router/pop
+          (e/server
+            (binding [base-path (fs/absolute-path "./")]
+              (let [x (if-not fs-rel-path ; workaround glitch on tutorial navigate (nested router interaction)
+                        {} (clojure.java.io/file base-path (check fs-rel-path)))]
+                (Dir x)))))))))
+
+(comment
+  (def m (datafy (clojure.java.io/file (fs/absolute-path "./"))))
+  (def xs (nav m ::fs/children ((::fs/children m))))
+  (def xs2 ((treelister (fn [m] (::fs/children m)) #(includes-str? (::fs/name %) %2) xs) ""))
+  (count (seq xs))
+  (def qs (take 10 xs))
+  (first qs))
+
+(def css "
+/* Scroll machinery */
+.DirectoryExplorer .Viewport { height: 100%; overflow-x:hidden; overflow-y:auto; }
+.DirectoryExplorer table { display: grid; }
+.DirectoryExplorer table tr { display: contents; visibility: var(--visibility); }
+.DirectoryExplorer table td { grid-row: var(--order); }
+
+/* fullscreen, except in tutorial mode */
+.Tutorial > .DirectoryExplorer fieldset { height: 30em; } /* max-height doesn't work - fieldset quirk */
+:not(.Tutorial) > .DirectoryExplorer fieldset { position:fixed; top:0em; bottom:0; left:0; right:0; }
+
+/* Cosmetic styles */
+.DirectoryExplorer fieldset { padding: 0; padding-left: 0.5em; background-color: white; }
+.DirectoryExplorer legend { margin-left: 1em; font-size: larger; }
+.DirectoryExplorer legend > input[type=text] { vertical-align: middle; }
+.DirectoryExplorer table { grid-template-columns: auto 6em 5em 3em; }
+.DirectoryExplorer table td { height: 24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.DirectoryExplorer table tr:hover td { background-color: #ddd; }
+.DirectoryExplorer table tr[data-row-stripe='0'] td { background-color: #f2f2f2; }")-e 
+
+
+./todos.cljc:
+
+(ns electric-tutorial.todos
+  (:require #_[clojure.core.match :refer [match]]
+            #?(:clj [datascript.core :as d])
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :as cqrs
+             :refer [Input! Checkbox! Checkbox* Button! Form!
+                     Service PendingController try-ok effects*]]
+            [dustingetz.trivial-datascript-form :refer [#?(:clj transact-unreliable)]]))
+
+(defn stable-kf [tempids-rev {:keys [:db/id]}]
+  (let [id (if (fn? id) (str (hash id)) id)]
+    (prn "stable-kf" id '-> (tempids-rev id))
+    (tempids-rev id id)))
+
+(defn fast-stable-kf [get-tempids-rev {:keys [:db/id]}]
+  (let [tempids-rev (get-tempids-rev)
+        id (if (fn? id) (str (hash id)) id)]
+    (prn "fast-stable-kf" id '-> (tempids-rev id))
+    (tempids-rev id id)))
+
+(e/defn Todo-records [db tempids forms] ; todo field awareness
+  (e/client
+    (let [tempids-rev (clojure.set/map-invert tempids)
+          kf (partial fast-stable-kf ; passed to e/diff-by, crazy slowdown if fn value updates
+               ((e/capture-fn) (constantly (doto tempids-rev (prn "generate new stable-kf")))))]
+      (PendingController kf :task/description forms ; rebind transact to with, db must escape
+        (e/server
+          (e/diff-by :db/id
+            (e/Offload ; good reason to not require offload to have # ?
+              #(try
+                 (prn "query records")
+                 (->> (d/q '[:find [(pull ?e [:db/id
+                                              :task/status
+                                              :task/description]) ...]
+                             :where [?e :task/status]] db)
+                   (sort-by :task/description))
+                 (catch Exception e (prn e))))))))))
+
+; if there is a button type submit in the form, and you press enter in an input, the form will submit
+; checkboxes don't do that (don't have enter behavior - toggle with space, enter is noop), therefore you need
+; auto-submit true on the form if you want inputs to auto-submit.
+
+(e/declare debug*)
+(e/declare slow*)
+(e/declare fail*)
+(e/declare show-buttons*)
+
+(e/defn TodoCreate []
+  (Form! (Input! ::create "" :placeholder "Buy milk") ; press enter
+    :genesis true ; immediately consume form, ready for next submit
+    :commit (fn [{v ::create :as dirty-form} tempid]
+              (prn 'TodoCreate-commit dirty-form)
+              [[`Create-todo tempid v] {tempid {:db/id tempid :task/description v :task/status :active}}])
+    :show-buttons show-buttons* :debug debug*))
+
+(e/defn TodoItem [{:keys [db/id task/status task/description ::cqrs/pending] :as m}]
+  (dom/li
+    (Form!
+      (e/amb
+        (Form! (Checkbox! :task/status (= :done status)) ; FIXME clicking commit button on top of autocommit generates broken doubled tx
+          :name ::toggle
+          :commit (fn [{v :task/status}] [[`Toggle id (if v :done :active)]
+                                          {id (-> m (dissoc ::pending) (assoc :task/status v))}])
+          :show-buttons show-buttons* :auto-submit (not show-buttons*))
+        (Form! (Input! :task/description description)
+          :name ::edit-desc
+          :commit (fn [{v :task/description}] [[`Edit-todo-desc id v]
+                                               {id (assoc m :task/description v)}])
+          :show-buttons show-buttons*
+          :debug debug*)
+        (Form! (Button! nil :label "X" :class "destroy" :disabled (some? pending))
+          :auto-submit (not show-buttons*) :show-buttons show-buttons*
+          :name ::destroy
+          :commit (fn [_] [[`Delete-todo id] {id ::cqrs/retract}]))
+
+        (if-let [[t xcmd guess] pending]
+          [t {::pending xcmd} guess]
+          (e/amb)))
+      :auto-submit (not show-buttons*) :show-buttons show-buttons* :debug debug*
+      :commit (fn [{:keys [::toggle ::edit-desc ::destroy ::pending]}]
+                [[`Batch toggle edit-desc destroy pending] {}]
+                #_(let [[_ id status] toggle
+                        [_ id v] create
+                        [_ id v'] edit-desc
+                        [_ id] destroy]
+                    (cond
+                      (and create destroy) nil #_[nil dirty-form-guess]
+                      (and create edit) [[`Create-todo (or v' v)] dirty-form-guess]))))))
+
+(e/defn TodoList [db tempids forms]
+  (dom/div (dom/props {:class "todo-list"})
+    (let [forms' (TodoCreate) ; transfer responsibility to pending item form
+          todos (Todo-records db tempids (e/amb forms forms'))]
+      (e/amb
+        (dom/ul (dom/props {:class "todo-items"})
+          (e/for [m todos]
+            (TodoItem m)))
+        (dom/p (dom/text (e/Count todos) " items left"))))))
+
+#?(:clj (def !conn (doto (d/create-conn {})
+                     (d/transact!
+                       [{:task/description "feed baby" :task/status :active}
+                        {:task/description "buy milk" :task/status :active}
+                        {:task/description "call mom" :task/status :active}]))))
+
+(e/declare !tx-report)
+
+(defn accumulate-tx-reports! [!tx-report new-tx-report]
+  (swap! !tx-report (fn [{:keys [tempids] :as tx-report}]
+                      (merge tx-report (update new-tx-report :tempids (fn [old-tempids] (merge old-tempids tempids)))))))
+
+(e/defn Create-todo [tempid desc]
+  (let [serializable-tempid (str (hash tempid))]
+    (e/server
+      (let [tx [{:task/description desc, :task/status :active :db/id serializable-tempid}]]
+        (e/Offload #(try-ok (accumulate-tx-reports! !tx-report
+                              (transact-unreliable !conn tx :slow slow* :fail fail*))))))))
+
+(e/defn Edit-todo-desc [id desc]
+  (e/server
+    (let [tx [{:db/id id :task/description desc}]]
+      (e/Offload #(try-ok (accumulate-tx-reports! !tx-report
+                            (transact-unreliable !conn tx :slow slow* :fail fail*)))))))
+
+(e/defn Toggle [id status]
+  (e/server
+    (let [tx [{:db/id id, :task/status status}]]
+      (e/Offload #(try-ok (accumulate-tx-reports! !tx-report
+                            (transact-unreliable !conn tx :slow slow* :fail fail*)))))))
+
+(e/defn Delete-todo [id] ; FIXME retractEntity works but todo item stays on screen, who is retaining it?
+  (e/server
+    (let [tx [[:db/retractEntity id]]]
+      (e/Offload #(try-ok (accumulate-tx-reports! !tx-report
+                            (transact-unreliable !conn tx :slow slow* :fail fail*)))))))
+
+;; WIP - working but questionable and has duplicate code with cqrs/Service
+;; Can we avoid batching entirely?
+;; same pattern as m/join
+(e/defn Batch [& forms]
+  (prn 'Batch forms)
+  (let [forms (filter some? forms)
+        results (e/for [form (e/diff-by {} forms)] ; diff by effect position, not great
+                  (e/When form
+                    (let [[effect & args] form
+                          Effect (effects* effect (e/fn default [& args] (doto ::effect-not-found (prn effect))))
+                          res #_[t form guess db] (e/Apply Effect args)] ; effect handlers span client and server
+                      res)))
+        results (e/as-vec results)]
+    (if (= (count results) (count forms)) ; poor man's m/join
+      (cond
+        (every? nil? results) nil
+        (every? #{::cqrs/ok} results) ::cqrs/ok
+        () (some some? results))
+      (e/amb)))) ; wait until done
+
+(e/defn Todos []
+  (e/client
+    (binding [effects* {`Create-todo Create-todo
+                        `Edit-todo-desc Edit-todo-desc
+                        `Toggle Toggle
+                        `Delete-todo Delete-todo
+                        `Batch Batch}
+              debug* (Checkbox* false :label "debug")
+              slow* (Checkbox* true :label "latency")
+              fail* (Checkbox* false :label "failure" :disabled true)
+              show-buttons* (Checkbox* false :label "show-buttons")
+              !tx-report (e/server (atom {:db-after @!conn}))]
+      debug* slow* fail* show-buttons*
+
+      ;; on create-new submit, in order:
+      ;; 1. transact! is called
+      ;; 2. submit token is spent
+      ;;   3. create-new's OnAll branch unmounts, and so the parent Form!, and so the PendingController optimistic branch
+      ;;   4. PendingController *should* retract the pending edit on unmount, but this crashes the app today.
+      ;; 5. either looped tempids or (e/watch !conn) propagates first
+      ;; 6. PendingController sees new query result and new tempids
+      ;;   - PendingController reconciles new entity with existing (!) branch
+      ;;     - PendingController reverts tempdis and has a stable-kf
+      ;; Problems:
+      ;; - PendingController retracts the edit on token burn, before the authoritative entity is queried
+      ;;   - the todo row is unmounted before the query reruns.
+      ;; - as of today, PendingController crashes the app (infinite loop) on edit retraction
+      ;;   - if we don't retract the pending edit, TodoList loops and we get end up with two created entries instead of one.
+      (let [tx-report (e/server (e/watch !tx-report))
+            db (e/server (:db-after tx-report))
+            tempids (e/server (:tempids tx-report))] ; TODO new db propagates before new tempids, so we see a transitory row, we must ensure db and tempids update at the same time.
+        (Service
+          (e/with-cycle* first [forms (e/amb)]
+            (e/Filter some?
+              (TodoList db tempids forms))))))))
+-e 
+
+
+./system_properties.cljc:
+
+(ns electric-tutorial.system-properties
+  (:require [clojure.string :as str]
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]))
+
+#?(:clj (defn jvm-system-properties [?s]
+          (->> (System/getProperties) (into {})
+            (filter (fn [[k _v]]
+                      (str/includes? (str/lower-case (str k))
+                        (str/lower-case (str ?s)))))
+            (sort-by first))))
+
+(e/defn SystemProperties []
+  (e/client
+    (let [!search (atom "") search (e/watch !search)
+          system-props (e/server (e/Offload #(jvm-system-properties search)))]
+      (dom/div (dom/text (e/server (count system-props)) " matches"))
+      (dom/input (dom/props {:type "search", :placeholder "🔎  java.class.path"})
+        (reset! !search (dom/On "input" #(-> % .-target .-value) ""))) ; cycle
+      (dom/table
+        (e/for [[k v] (e/server (e/diff-by key system-props))]
+          (println 'rendering k #_v)
+          (dom/tr (dom/td (dom/text k)) (dom/td (dom/text v))))))))-e 
+
+
+./form_list.cljc:
+
+(ns electric-tutorial.form-list ; superseded
+  (:require [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer
+             [Input! Checkbox! Checkbox* Form!]]))
+
+(e/defn UserFormServer1 [{:keys [user/str1 user/num1 user/bool1]}]
+  (Form!
+    (e/amb ; concurrent individual edits!
+      (Input! :user/str1 str1) ; fields are named
+      (Input! :user/num1 num1 :type "number" :parse parse-long)
+      (Checkbox! :user/bool1 bool1))
+    :commit (fn [dirty-form] [dirty-form nil])))
+
+(def state0 {:user/str1 "hello" :user/num1 42 :user/bool1 true})
+
+(declare css)
+(e/defn FormList []
+  (dom/style (dom/text css))
+  (let [fail (dom/div (Checkbox* true :label "failure"))
+        !x (e/server (atom state0)) x (e/server (e/watch !x))
+        edits (e/amb
+                (dom/div (UserFormServer1 x))
+                (dom/div (UserFormServer1 x)))]
+    fail
+    (e/for [[t dirty-form] edits] ; concurrent edit processing
+      (let [res (e/server
+                  (if fail ::rejected (do (swap! !x merge dirty-form) ::ok)))]
+        (case res
+          ::ok (t)
+          (t res))))
+    (dom/pre (dom/text (pr-str x)))))
+
+(def css "
+[aria-busy=true] {background-color: yellow;}
+[aria-invalid=true] {background-color: pink;}")-e 
+
+
+./todomvc.cljc:
+
+(ns electric-tutorial.todomvc
+  (:require [contrib.data :refer [unqualify]]
+            #?(:clj [datascript.core :as d])
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :as cqrs :refer [Input! Checkbox! Button! Form! Service]]
+            ))
+
+#?(:clj
+   (defn query-todos [db filter]
+     {:pre [filter]}
+     (case filter
+       :active (d/q '[:find [?e ...] :where [?e :task/status :active]] db)
+       :done   (d/q '[:find [?e ...] :where [?e :task/status :done]] db)
+       :all    (d/q '[:find [?e ...] :where [?e :task/status]] db))))
+
+#?(:clj
+   (defn todo-count [db filter]
+     {:pre  [filter]
+      :post [(number? %)]}
+     (-> (case filter
+           :active (d/q '[:find (count ?e) . :where [?e :task/status :active]] db)
+           :done   (d/q '[:find (count ?e) . :where [?e :task/status :done]] db)
+           :all    (d/q '[:find (count ?e) . :where [?e :task/status]] db))
+       (or 0)))) ; datascript can return nil wtf
+
+(e/defn Filter-control [state target label]
+  (Button! [`Set-filter target] :label label
+    :class (str "anchor-button " (when (= state target) "selected"))))
+
+(e/defn TodoStats [db state]
+  (let [active (e/server (todo-count db :active))
+        done   (e/server (todo-count db :done))]
+    (dom/div
+      (e/amb
+        (dom/span (dom/props {:class "todo-count"})
+          (dom/strong (dom/text active))
+          (dom/span (dom/text " " (str (case active 1 "item" "items")) " left")))
+
+        (dom/ul (dom/props {:class "filters"})
+          (e/amb
+            (dom/li (Filter-control (::filter state) :all "All"))
+            (dom/li (Filter-control (::filter state) :active "Active"))
+            (dom/li (Filter-control (::filter state) :done "Completed"))))
+
+        (when (pos? done)
+          (Button! [`Clear-completed] :class "clear-completed", :label "Clear completed"))))))
+
+(e/defn TodoItem [db state id]
+  (let [!e (e/server (d/entity db id))
+        status (e/server (:task/status !e))
+        description (e/server (:task/description !e))]
+    (dom/li
+      (e/amb
+        (dom/props {:class [(when (= :done status) "completed")
+                            (when (= id (::editing state)) "editing")]})
+        (dom/div (dom/props {:class "view"})
+          (e/amb
+            (Form! (Checkbox! :task/status (= :done status) :class "toggle")
+              :commit (fn [{v :task/status}]
+                        (let [status (case v true :done, false :active, nil)]
+                          [[`Toggle id status] {id {:task/status status
+                                                    :task/description description}}]))
+              :show-buttons false :auto-submit true)
+            (dom/label (dom/text description)
+              (e/for [[t _] (dom/On-all "dblclick" (constantly true))]
+                (prn 'click!)
+                [t [`Editing-item id] {}]))))
+        (when (= id (::editing state))
+          (dom/span (dom/props {:class "input-load-mask"})
+            (Form! (Input! :task/description description :class "edit" :autofocus true)
+              :commit (fn [{v :task/description}] [[`Edit-todo-desc id v] {id {:task/description v}}])
+              :discard `[[Cancel-todo-edit-desc] {id {}}] ; todo guess :retractEntity
+              :show-buttons false)))
+        (Button! [`Delete-todo id] :class "destroy"))))) ; missing prediction ; should Button! be wrapped in (Form! …) ?
+
+(e/defn Query-todos [db filter edits]
+  (e/server (e/diff-by identity (sort (query-todos db filter)))))
+
+(e/defn TodoList [db state edits]
+  (dom/div
+    (dom/section (dom/props {:class "main"})
+      (e/amb
+        (let [active (e/server (todo-count db :active))
+              all    (e/server (todo-count db :all))
+              done   (e/server (todo-count db :done))
+              toggle-all (cond (= all done) true (= all active) false :else nil)]
+          (Form! (Checkbox! ::toggle-all toggle-all :class "toggle-all")
+            :commit (fn [{v ::toggle-all}]
+                      (let [status (case v (true nil) :done, false :active)]
+                        [[`Toggle-all status] nil])) ; no prediction, no entity id, not database state
+            :auto-submit true :show-buttons false))
+        (dom/label (dom/props {:for "toggle-all"}) (dom/text "Mark all as complete"))
+        (dom/ul (dom/props {:class "todo-list"})
+          (e/for [id (Query-todos db (::filter state) edits)]
+            (TodoItem db state id)))))))
+
+(e/defn CreateTodo []
+  (dom/span (dom/props {:class "input-load-mask"})
+    (Form! (Input! :task/description "" :placeholder "What needs to be done?" :class "new-todo input-load-mask")
+      :genesis true
+      :commit (fn [{:keys [task/description]}]
+                [[`Create-todo description] {:task/description description, :task/status :active}])
+      :show-buttons false)))
+
+(e/defn TodoMVC-UI [db state edits]
+  (dom/section (dom/props {:class "todoapp"})
+    (e/amb
+      (dom/header (dom/props {:class "header"})
+        (CreateTodo))
+      (e/When (e/server (pos? (todo-count db :all)))
+        (TodoList db state edits))
+      (dom/footer (dom/props {:class "footer"})
+        (TodoStats db state)))))
+
+(e/defn Diagnostics [db state]
+  (dom/dl
+    (dom/dt (dom/text "count :all")) (dom/dd (dom/text (pr-str (e/server (todo-count db :all)))))
+    (dom/dt (dom/text "query :all")) (dom/dd (dom/text (pr-str (e/server (query-todos db :all)))))
+    (dom/dt (dom/text "state")) (dom/dd (dom/text (pr-str (update-keys state unqualify))))
+    (dom/dt (dom/text "delay")) (dom/dd (e/amb (Form! ; dumb wrapper, Input! must be wrapped now to unpack field kvs
+                                                 (Input! ::delay (::delay state)
+                                                   :type "number" :step 1 :min 0 :parse parse-long
+                                                   :style {:width :min-content})
+                                                 :commit (fn [{v ::delay}] [[`Set-delay v] nil])
+                                                 :auto-submit true :show-buttons false)
+                                          (dom/text " ms")))))
+
+(e/defn Transact! [!conn delay tx]
+  (e/server (prn 'Transact! delay tx)
+    (e/Offload #(try (Thread/sleep delay)
+                  (d/transact! !conn tx) (doto ::cqrs/ok prn)
+                  (catch Throwable e (doto ::fail (prn e)))))))
+
+(e/declare db)
+(e/declare !state)
+(e/declare state)
+
+(e/defn Clear-completed []
+  (e/server (->> (seq (query-todos db :done))
+              (mapv (fn [id] [:db/retractEntity id])) Transact!)))
+
+(e/defn Toggle [id status]
+  (e/server (Transact! [{:db/id id, :task/status status}])))
+
+(e/defn Toggle-all [status]
+  (e/server (Transact! (->> (query-todos db (if (= :done status) :active :done))
+                         (mapv (fn [id] {:db/id id, :task/status status}))))))
+
+(e/defn Cancel-todo-edit-desc [] (e/client (swap! !state assoc ::editing nil) ::cqrs/ok))
+(e/defn Delete-todo [id] (e/server (Transact! [[:db/retractEntity id]])))
+(e/defn Create-todo [desc] (e/server (Transact! [{:task/description desc, :task/status :active}])))
+(e/defn Editing-item [id] (e/client (swap! !state assoc ::editing id) ::cqrs/ok))
+(e/defn Edit-todo-desc [id desc]
+  (e/client (case (e/server (Transact! [{:db/id id, :task/description desc}]))
+              ::cqrs/ok (do (swap! !state assoc ::editing nil) ::cqrs/ok)
+              ::fail)))
+
+(e/defn Set-delay [v] (e/client (swap! !state assoc ::delay v) ::cqrs/ok))
+(e/defn Set-filter [target] (e/client (swap! !state assoc ::filter target) ::cqrs/ok))
+
+(e/defn Effects []
+  (e/client
+    {`Clear-completed Clear-completed
+     `Toggle Toggle
+     `Editing-item Editing-item
+     `Edit-todo-desc Edit-todo-desc
+     `Cancel-todo-edit-desc Cancel-todo-edit-desc
+     `Delete-todo Delete-todo
+     `Toggle-all Toggle-all
+     `Create-todo Create-todo
+     `Set-delay Set-delay
+     `Set-filter Set-filter}))
+
+(def state0 {::filter :all, ::editing nil, ::delay 0 #_500})
+#?(:clj (def !conn (doto (d/create-conn {})
+                     (d/transact!
+                       [{:task/description "feed baby" :task/status :active}
+                        {:task/description "buy milk" :task/status :active}
+                        {:task/description "call mom" :task/status :active}]))))
+
+(e/defn TodoMVC []
+  (e/client
+    (dom/link (dom/props {:rel :stylesheet, :href "/todomvc.css"}))
+    (dom/props {:class "todomvc"})
+    (binding [!state (atom state0)]
+      (binding [state (e/watch !state)]
+        (binding [db (e/server (e/watch !conn))
+                  Transact! (e/server (e/Partial Transact! !conn (e/client (::delay state))))
+                  cqrs/effects* (Effects)]
+          (Service
+            (e/amb
+              (e/with-cycle* first [edits (e/amb)]
+                (e/Filter some?
+                  (TodoMVC-UI db state edits)))
+              (Diagnostics db state))))))
+
+    (dom/footer (dom/props {:class "info"})
+      (dom/p (dom/text "Double-click to edit a todo")))))
+
+(comment
+  (todo-count @!conn :all)
+  (todo-count @!conn :active)
+  (todo-count @!conn :done)
+  (query-todos @!conn :all)
+  (query-todos @!conn :active)
+  (query-todos @!conn :done)
+  (d/q '[:find (count ?e) . :where [?e :task/status]] @!conn))
+-e 
+
+
+./dir_tree.md:
+
+# Dir Tree <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Recursive traversal over directory structure on the server, with in-flight rendering to a recursive DOM view on the client, all in one function.
+* This is an example of something that is easy to do in Electric but hard to do with competing technologies.
+* Goal: get comfortable with Electric v3's client/server transfer semantics in a more interesting topology.
+
+!ns[electric-tutorial.dir-tree/DirTree]()
+
+What's happening
+
+* client-side rendering the contents of the `src/hyperfiddle` directory (a server resource)
+* client-side filtering through the dom/input - try it
+* File system I/O is done with standard Java operators
+* `Dir-tree*` is a **single-pass recursive function**, it both traverses the directory tree and renders it to the client in a single pass
+* The view code deeply nests client and server calls, arbitrarily, even through loops and recursion. The control flow switches between client and server as if it didn't matter – because it doesn't! The Electric compiler figures it out.
+* How would you even approach this with GraphQL, REST, or some other dataloader abstraction?
+
+Performance note: there is some lag here! Why does it load in "stratas"? Do we need to be concerned about round trips?
+* Yes, this is a request waterfall and it is an implementation flaw. Yes, it will be fixed.
+* The Electric DAG captures statically the information needed to batch and essentially pre-send the information that the client is going to ask for.
+* But we haven't implemented this yet, basically we have `;todo static lookahead` throughout the network runtime. Soon!
+* Our experience running v2 in production is that it was plenty fast in real apps. But, performance is important to us, and we will likely work on this next!
+* If you need to optimize this we can show you how. Probably use `tree-seq` to flatten the tree in Clojure, which is what we did in this <a href="https://electric-demo.fly.dev/(user.demo-explorer!%44irectory%45xplorer)">Electric v2 tree view</a>, which is pretty good! (The flicker in that demo is fixed in v3)
+
+Client/server transfer - the basics
+
+* Only values can be serialized and moved across the network. Reference types (e.g. atoms, database connections, Java classes) are unserializable and therefore cannot be moved.
+* `(Dir-tree* h s)` is called with both server and client values, which pass through the Electric function call into the body without network transfer.
+
+**"Platform interop is sited, edges are not"** (remember this!)
+
+* Values transfer over network only when platform interop requires it. (Platform interop = foreign Clojure/Script code)
+* "Site" is which site (e.g. client or server) an expresison evaluates on.
+* the java file handle `h` is server-sited because `java.nio.file.Path/of`, `clojure.java.io/file` etc are server-sited. Note, as it is a reference type, `h` is not serializable, it cannot cross to the client even if you wanted it to.
+* `(e/server (.getName h))` passes `h` to Clojure interop `.getName`, which forces `h` to be server-sited, which it already is because it came from `(e/server ... (java.nio.file.Path/of ...))`
+* `(dom/text _name)` macroexpands to something like `(e/client (set! (.-textContent e) arg))`; the `set!` (Clojure interop) is what forces the transfer of `_name`.
+* (This model is not request/response or RPC; that would be too slow. The transfer is coordinated and planned ahead of time by the compiler/DAG. See: [UIs are streaming DAGs (Getz 2022)](https://hyperfiddle.notion.site/UIs-are-streaming-DAGs-e181461681a8452bb9c7a9f10f507991)
+
+Edges are not sited in v3!
+* **Edges** (i.e., in the DAG) are the connections between a shared expression named with `let` and it's consumers. E.g., `h` on L23 is consumed in 4 places: `(.getName h)`, `(.listFiles h)` etc. Each of these 4 connections is an edge in the DAG.
+* Edges are not inherently sited! Just because on L22, let binding `s` is created in a server block, does not move `s` to the client! `s` passes through `(Dir-tree* h s)` symbolically, it is not moved unless forced by platform interop, as on L17 `(includes-str? name_ s)`.
+* Electric `let`, conceptually, is abstract symbolic plumbing; we do NOT want the fact that we assigned a symbolic name to an expression’s result, to infect the result itself by changing it’s site!
+* **Accidental transfer** was a huge issue in Elecric v2 that is now completely gone in v3 due to these semantics. See discussion here: [Electric Clojure v3 teaser: improved transfer semantics (Getz 2024)](https://hyperfiddle-docs.notion.site/Electric-Clojure-v3-teaser-improved-transfer-semantics-2024-735b10c3a0dc424e93e060a0a3e80226)
+
+Electric `let` is **concurrent** in v3
+* `let` supports client and server bindings in the same let, as here L22.
+* These two bindings "happen" on different machines!
+* That means they are concurrent, there is no sequencing or causality between concurrent let bindings unless explicit in the DAG.
+* This is a departure from Clojure semantics, where expressions bound in a let are executed in statement order. This change is backwards compatible to the extent that your Clojure code is referentially transparent.
+
+Dynamic siting (new in v3)
+* `e/server` and `e/client` are inherited through dynamic scope (in the absence of an explicit site on the expression).
+* (In v2 site inheritance was lexical, which caused problems, this fixes them.)
+* I don't think the difference matters here in this demo, other than it enables "auto-siting" syntax sugar:
+
+electric-dom macros auto-site their contents (syntax sugar)
+* FAQ: L12 `dom/li` is in server scope. Shouldn't that be wrapped in e/client? A: In v3, the dom macros will automatically insert an `e/client` around the underlying dom mutations in the macroexpansion. In v2 this was not automatic, you had to explicitly site your dom expressions.
+* Here is the implementation of dom element construction:
+
+!fn-src[hyperfiddle.electric-dom3/With-element]()
+
+* On L10, note the `Body` continuation expression (containing the element's children) is **unsited**! The dom macros carefully site their own effects without altering the site of their children (in the continuation), which stays the same (i.e., inherits the application expression's site through dynamic scope).
+* In `Dir-tree*`, the `dom/li` on L12 is server-sited, which means (after inserting the `li` on the side) the `dom/ul` will remain server-sited, and then the `e/for-by` and `(.listFiles h)` are server-sited.
+* We call this the "site-neutral style" — where the library programmer takes care to implement certain components in a portable way that allow the application programmer to control the site of parts of the component's implementation. We'll discuss this in the Typeahead tutorial (todo).
+
+So, what's the final network topology here?
+
+* Explained in depth in [Talk: Electric Clojure v3: Differential Dataflow for UI (Getz 2024)](https://hyperfiddle-docs.notion.site/Talk-Electric-Clojure-v3-Differential-Dataflow-for-UI-Getz-2024-2e611cebd73f45dc8cc97c499b3aa8b8)
+
+-e 
+
+
+./explorer.md:
+
+# Directory Explorer <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Server-streamed virtual scroll in **~50ish LOC**
+* View grid in <a href="/electric-tutorial.explorer!DirectoryExplorer/">fullscreen mode here</a>. 
+* Try it on your phone!
+
+<div style="margin-bottom: 2em;"></div>
+
+!target-nochrome[electric-tutorial.explorer/DirectoryExplorer]()
+
+<div style="margin-bottom: 2em;"></div>
+
+What's happening
+* File system browser
+* 1000s of records, server streamed as you scroll - file system to dom.
+* Try holding Page Down to "play the tape forward"
+* It's very fast, faster than the v2 datomic browser, with larger viewports, and more complex markup
+* nontrivial row rendering - hierarchy with indentation, hyperlinks, custom row markup
+* links work (try it) with inline navigation, **browser history, forward/back, page refresh**, etc! Cool
+* Optimized DOM write patterns: DOM is only touched at the edges. Open element inspector and see!
+
+## Source code overview
+
+!ns-src[electric-tutorial.explorer]()
+
+* crisp, simple code — both user code, and the scroll helpers
+* scroll helpers in [hyperfiddle.electric-scroll0](https://github.com/hyperfiddle/electric/blob/master/src/hyperfiddle/electric_scroll0.cljc)
+* [datafy-fs (filesystem as data)](https://gist.github.com/dustingetz/681dcbf16d104b1496a29f2f08965fc8)
+
+Differential, server-streamed data loading
+
+* Take a closer look at `TableScroll` impl on L40.
+* The important bit is the `e/for` on L46, essentially:
+* `(e/server (e/for [i (IndexRing limit offset)] (Row i (nth xs! i nil))))`
+* This is the essence of a server-streamed virtual scroll: 
+  * we use `offset` and `limit` (from the client), 
+  * send them up, spawn or rotate rows on the server using `IndexRing` (todo explain), 
+  * `(nth xs! i nil)` looks up the file based on the index *on the server*, 
+  * `(Row x)` enters the `Row` function and continues into `Render-cell`, running all reachable server scopes as far as possible, 
+  * finally broadcasting to the client that `(Row x`) has updated, automatically including all the server state the client is about to need,
+  * ultimately the client runs the client scopes and incrementally maintains the collection in the DOM.
+* **All this expressed in that single `e/for` expression, 1-2 LOC!**
+
+Server streams the data that the client needs without being asked, i.e. without request waterfalls
+
+* `Row` and `Render-cell` switch between `e/client` and `e/server` to fetch the data they need **inline**!
+* Even with inline `e/server` expressions, the rows load without request waterfalls as described in [Talk: Electric Clojure v3: Differential Dataflow for UI (Getz 2024)](https://hyperfiddle-docs.notion.site/Talk-Electric-Clojure-v3-Differential-Dataflow-for-UI-Getz-2024-2e611cebd73f45dc8cc97c499b3aa8b8).
+* This is because the `e/for` and `(Row i x)` are same-sited, so they run synchronously: the server enters the Row renderer frame and optimistically sends the data dependencies that it knows the client is about to ask for. Which is certainly necessary for performance here, any waterfall in this code path is very obvious.
+
+## Our goal with Electric: zero-cost abstraction over network
+
+* Did you notice that the code is very nearly generic?
+* Take another look at the code. Notice the composition structure.
+* Do you think you could generalize this into an abstract data browser? Of course you could.
+* The whole point of building Electric was to pave the way for exactly that: a general purpose web-based data browser — i.e., *general hypermedia client* — that is powerful enough to express bespoke business applications, in their full glory: without sacrificing complexity, customization, or performance requirements.
+* Based on this result, it seems that with v3, Electric has finally achieved sufficiently strong operational properties to achieve this goal! 🎉🎉🎉🥳🥳🎸🎸 (I hope it was worth the $2M that we spent!)
+* [Join our beta](https://www.hyperfiddle.net/early-access.html) if you'd like to take a whack at it! Maybe you beat us to it?
+-e 
+
+
+./svg.md:
+
+# SVG support <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+Note the animation is reactive and driven by javascript cosine.
+
+!ns[electric-tutorial.svg/SVG]()
+-e 
+
+
+./backpressure.cljc:
+
+(ns electric-tutorial.backpressure
+  (:require [hyperfiddle.electric3 :as e :refer [$]]
+            [hyperfiddle.electric-dom3 :as dom]))
+
+(e/defn Backpressure []
+  (let [c (e/client (/ (e/System-time-ms) 1000))
+        s (e/server (double (/ (e/System-time-ms) 1000)))]
+
+    (prn 'c (int c)) ; check console
+    (prn 's (int s))
+
+    (dom/div (dom/text "client time: " c))
+    (dom/div (dom/text "server time: " s))
+    (dom/div (dom/text "skew: " (.toPrecision (- s c) 2)))))-e 
+
+
+./dir_tree.cljc:
+
+(ns electric-tutorial.dir-tree
+  (:require #?(:clj clojure.java.io)
+            [contrib.str :refer [includes-str?]]
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]))
+
+(e/defn Dir-tree* [h s]
+  (e/server
+    (let [name_ (.getName h)]
+      (cond
+        (.isDirectory h)
+        (dom/li (dom/text name_)
+          (dom/ul
+            (e/for-by hash [x (.listFiles h)]
+              (Dir-tree* x s))))
+
+        (and (.isFile h) (includes-str? name_ s))
+        (dom/li (dom/text name_))))))
+
+(e/defn DirTree []
+  (e/client
+    (let [s (dom/input (dom/On "input" #(-> % .-target .-value) ""))
+          h (e/server (-> "./vendor/electric/src/hyperfiddle"
+                        (java.nio.file.Path/of (into-array String []))
+                        .toAbsolutePath str clojure.java.io/file))]
+      (dom/ul
+        (Dir-tree* h s)))))-e 
+
+
+./token_explainer.cljc:
+
+(ns electric-tutorial.token-explainer
+  (:require [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer [Checkbox*]]))
+
+(declare css)
+(e/defn TokenExplainer []
+  (dom/style (dom/text css))
+  (let [slow (dom/div (Checkbox* true :label "latency"))
+        fail (dom/div (Checkbox* true :label "failure"))
+        !x (e/server (atom true)) x (e/server (e/watch !x))]
+    slow fail
+    (when-some [t (dom/button (dom/text "toggle!")
+                    (let [e (dom/On "click" identity nil)
+                          [t err] (e/Token e)]
+                      (dom/props {:aria-busy (some? t)
+                                  :disabled (some? t)
+                                  :aria-invalid (some? err)})
+                      t))]
+      (let [res (e/server
+                  (e/Offload
+                    (fn []
+                      (when (true? slow) (Thread/sleep 1000))
+                      (if fail ::rejected (do (swap! !x not) ::ok)))))]
+        (case res
+          ::ok (t) ; success sentinel
+          (t res)))) ; feed error back into originating control
+    (dom/code (dom/text (pr-str x)))))
+
+(def css "
+[aria-busy=true] {background-color: yellow;}
+[aria-invalid=true] {background-color: pink;}")-e 
+
+
+./webview1.md:
+
+# Webview <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+A database backed webview with reactive updates.
+
+!ns[electric-tutorial.webview1/Webview1]()
+
+What's happening
+* The webview is subscribed to the database, which updates with each transaction.
+* filtering (happens on server side)
+* differential collection updates - differential wire traffic
+* see diffs in console
+
+Callback-free input
+
+Concurrent let
+
+Differential dataflow
+* Watch the talk
+* streaming diffs, e/as-vec, Tap-diffs, e/amb, products ...
+
+Novel forms
+* `e/watch` on datascript connection
+* `e/offload` run a blocking function (i.e. query) on threadpool, JVM only
+* `e/diff-by`
+
+e/for is applicative only
+
+Key ideas
+* Datascript is on the server, it can be any database
+* Direct query/view composition, with a loop
+* Electric is fully asynchronous, don't block the event loop!
+* IO encapsulation – we want `Webview` to be sheltered from knowing/caring that the `Teeshirt-orders` function accesses server data.
+
+See the London Clojurians 2024 talk about this subject.
+
+Why entity API?
+* because the collection is differential - we prefer to pay for queries at item granularity. If a single element is added to the collection, we don't want to redo the whole query - just load the incremental record.
+* Matters a lot more in the virtual scroll case-e 
+
+
+./webview_diffs.cljc:
+
+(ns electric-tutorial.webview-diffs
+  (:require #?(:clj [dustingetz.teeshirt-orders-datascript :refer [ensure-db!]])
+            [electric-tutorial.webview2 :refer [Teeshirt-orders Row]]
+            [electric-tutorial.webview-column-picker :refer [ColumnPicker]]
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]))
+
+(e/defn GenericTable [cols Query Row]
+  (let [ids (Query)]
+    (dom/table (dom/props {:style {:--colcount (e/Count cols)}})
+      (e/for [id (e/Tap-diffs ids)] ; here -- row diffs
+        (dom/tr
+          (let [m (Row id)]
+            (e/for [k (e/Tap-diffs cols)] ; here -- column diffs
+              (dom/td
+                (e/call (get m k))))))))))
+
+(declare css)
+(e/defn WebviewDiffs []
+  (e/client
+    (dom/style (dom/text css))
+    (let [!log (atom [])
+          db (e/server (ensure-db!))
+          colspec (dom/div (ColumnPicker (e/amb :db/id :order/email :order/gender :order/shirt-size)))
+          search (dom/input (dom/On "input" #(-> % .-target .-value) ""))]
+      (binding [e/Tap-diffs (e/Partial e/Tap-diffs #(swap! !log conj %))]
+        (GenericTable
+          colspec
+          (e/Partial Teeshirt-orders db search nil)
+          (e/Partial Row db)))
+      (dom/hr)
+      (dom/button (dom/text "clear log") (dom/On "click" (fn [_] (reset! !log [])) nil))
+      (dom/pre
+        (e/for [x (e/diff-by hash (reverse (e/watch !log)))] ; {} means ordinal diff-by
+          (dom/div (dom/text (pr-str x))))))))
+
+(def css "
+.user-examples-target table { display: grid; column-gap: 1ch;
+  grid-template-columns: repeat(var(--colcount), max-content);
+  grid-template-rows: repeat(3, 24px); }
+.user-examples-target tr { display: contents; }
+.user-examples-target { height: 30em; }
+.user-examples-target pre { align: bottom; }")-e 
+
+
+./token_explainer.md:
+
+# `e/Token` — model latency, success, failure, retry <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* This demo toggles a boolean on the server, to introduce basic server RPC (remote procedure call) idioms.
+* Big idea: `e/Token` turns *callbacks* into *values*.
+* This primitive is the basis for transactional event processing in Electric v3.
+
+!ns[electric-tutorial.token-explainer/TokenExplainer]()
+
+What's happening
+* There's a button on the frontend, with a callback, that toggles a boolean, stored in a server-side atom.
+* Busy state – The button is yellow and disabled until the server effect completes.
+* Failure state with retry affordance, when the server effect is rejected.
+
+`e/Token` turns event callbacks into an object-like value
+* object-like: it has a managed lifecycle
+* value: it is immutable
+* **A "token" is a resource** that becomes valid (non-nil) once allocated, can be spent once, and is then no longer valid (becomes nil).
+* `(e/Token event)` starts `nil`, and when the next event comes, allocates a new token. This token is then retained until it is spent, *ignoring and silently discarding all subsequent events*. (Fear not, the next tutorial extends this pattern for *concurrent events*.)
+* When `t` becomes non-nil, `(when-some [t ...]` succeeds, and the when-body is mounted, disabling the button to prevent future events **(i.e. "backpressure the user", who is the source of events)**.
+* Generally you do not want to backpressure the user, except when you do.
+  * (The system should always be responsive and never lose state no matter how fast the user submits events. Except when the user submitted a transaction such as "purchase" and is waiting for confirmation. The user does not wish to accidentally purchase twice!)
+* Invoke the token as a function `(t)` to spend the token, which will turn it nil, which will unmount the when-body, removing the disabled state from the button, ready to receive the next event.
+
+"Service" pattern for remote transaction processing
+
+* The token value represents a "request"
+* the request is interpreted near the app root, to trigger a server command
+* The server returns `::ok` to signal success
+* the client inspects the result and clears the token — either successfully or with error
+* the button then becomes ready for another interaction, presenting the error if any.
+* `e/Offload` - move the function to a thread pool, so Thread/sleep doesn't block the Electric server which is async. Using an async sleep here is also fine.
+* We call this the `Service` pattern and may formalize a helper for it, or you can just code your own.
+
+Commentary on `e/Token` API
+
+* Many devs don't like this API when they see it, due to the exposed state machine, and want to cover it up with some syntax sugar. This was my initial reaction too.
+* But what we realized as a team, is that every nontrivial UI use case actually is a state machine. We believe this is in fact the right primitive, and our success building sophisticated transactional forms with it (later in this tutorial) are evidence that this is true.
+* We believe this unsugared `e/Token` primitive is quite good actually, and it will grow on you.-e 
+
+
+./counter.md:
+
+# Counter <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Demonstrates Electric lambda's powerful upgrades in v3, as well as concurrent event processing in the presence of latency.
+* There is progress, and concurrency. Try mashing the button.
+* It's multiplayer – the counter is on the server.
+
+!ns[electric-tutorial.counter/Counter]()
+
+What's happening
+
+* counter on server
+* progress indicator - counting down from 10 and then terminating
+* concurrent event processing - mash the button!
+
+Concurrent event processing with `dom/OnAll`
+* x
+
+Reactive lambda `e/fn`
+* supports client/server transfer
+
+Distributed lambda
+
+* the button callback spans both client and server. As does the `Toggle` function itself.
+
+Serializable lambda
+* the lambda "value" is serializable
+* it started on the server and then moved to client
+* check the console for `{1 [:electric-tutorial.counter/Counter 1 [] {}]}`
+* it's not actually moving the lambda, both sites see the structure of the lambda at compile time. We're just moving the pointer and both sites understand the pointer.
+
+Server RPC processing
+
+* `e/Offload` - run a blocking computation (thunk) to a threadpool. (Electric is an async computation, please do not block, if you do, it will block all concurrently connected sessions i.e. your other tabs!)
+
+Progress
+
+* `e/snapshot` - snapshot the current state of a reactive value, severing reactivity
+* `(- (e/snapshot (e/System-time-ms)) (e/System-time-ms))` captures the time of the click, and subtract it from the running time, in order to get a countdown
+* the progress timer is returned from the callback and given back to the button
+* this is a contorted pattern (why are N counters rendering to one button? That's never what you want). A better pattern is to extend the optimistic collection patterns in upcoming tutorials with progress functionality through the token interface (future work)
+
+Open questions
+
+```clojure
+(e/for [[t x] (Button! ::inc :label "inc")]
+  (case x ::inc (F! t))) ; how to use token interface to feed back progress?
+```
+
+7 GUIs reference: <https://eugenkiss.github.io/7guis/tasks/#counter>
+-e 
+
+
+./temperature2.cljc:
+
+(ns electric-tutorial.temperature2
+  (:require [clojure.math :refer [round]]
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer [Input]]
+            [missionary.core :as m]))
+
+(defn c->f [c] (+ (* c (/ 9 5)) 32))
+(defn f->c [f] (* (- f 32) (/ 5 9)))
+
+(def random-writer (m/ap (m/amb 0 (loop [] (m/? (m/sleep 1000))
+                                     (m/amb (rand-int 40) (recur))))))
+
+(e/defn Temperature2 []
+  (let [!v (atom 0) v (e/watch !v)
+        v' (e/amb
+             (e/input random-writer) ; concurrent writer
+             (dom/dl
+               (e/amb
+                 (dom/dt (dom/text "Celsius"))
+                 (dom/dd (some-> (Input v :type "number")
+                           not-empty parse-long))
+                 (dom/dt (dom/text "Fahrenheit"))
+                 (dom/dd (some-> (Input (round (c->f v)) :type "number")
+                           not-empty parse-long f->c round)))))]
+    (reset! !v v')))-e 
+
+
+./typeahead.cljc:
+
+(ns electric-tutorial.typeahead
+  (:require [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]))
+
+(declare css)
+(e/defn Typeahead [v-id Options #_OptionLabel]
+  (e/client
+    (dom/div (dom/props {:class "hyperfiddle-typeahead"})
+      (dom/style (dom/text css))
+      (let [OptionLabel (e/server (or #_OptionLabel (e/fn [x] (pr-str x))))
+            !v-id (atom v-id) v-id (e/watch !v-id)
+            !search (atom nil) search (e/watch !search)
+
+            t (dom/input (dom/props {:placeholder "Filter..."})
+                (let [[t err] (e/Token (dom/On "focus" identity nil))]
+                  (if t
+                    (reset! !search (dom/On "input" #(-> % .-target .-value) ""))
+                    (dom/props {:value (OptionLabel v-id)}))
+                  t))] ; controlled only when not focused
+
+        (if (some? t)
+          (dom/ul
+            (e/server
+              (e/for [x (Options search)] ; x server
+                (dom/li (dom/text (OptionLabel x))
+                  (dom/On "click" (e/client ; dom/On will auto-site, but cc/fn doesn't transfer
+                                    (fn [e] (doto e (.stopPropagation) (.preventDefault))
+                                      (reset! !v-id x) (t))) nil))))))
+        v-id))))
+
+(def css "
+.hyperfiddle-typeahead { position: relative; }
+.hyperfiddle-typeahead > ul {
+  position: absolute; z-index: 2; padding: 0;
+  list-style: none; background-color: white; width: 12em;
+  font-size: smaller; border: 1px solid black; }")-e 
+
+
+./inputs_local.cljc:
+
+(ns electric-tutorial.inputs-local
+  (:require [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer
+             [Input Input* Input!
+             Checkbox Checkbox* Checkbox!]]))
+
+(e/defn InputCicruit []) ; boilerplate
+
+(e/defn DemoInputNaive []
+  (let [s (dom/input ; dom elements return their final child value
+            (dom/props {:class "foo" :maxlength 100})
+            (dom/On "input" #(-> % .-target .-value) ""))]
+    (dom/code (dom/text (pr-str s)))))
+
+(e/defn DemoInputCircuit-uncontrolled []
+  (let [s (Input* "" :class "foo" :maxlength 100)]
+    (dom/code (dom/text (pr-str s))))
+  (dom/br)
+  (let [s (Input* "" :class "foo" :maxlength 100)]
+    (dom/code (dom/text (pr-str s)))))
+
+(e/defn DemoInputCircuit-controlled []
+  (let [!s (atom "") s (e/watch !s)]
+    (reset! !s (Input s))
+    (reset! !s (Input s))
+    (dom/code (dom/text (pr-str s)))))
+
+(e/defn DemoInputCircuit-amb []
+  (let [!s (atom "") s (e/watch !s)
+        s' (e/amb ; "table" of two values in superposition
+             (Input s)
+             (Input s))]
+    (reset! !s s') ; auto-map `reset!` over table s'
+    (dom/code (dom/text (pr-str s)))))
+
+(e/defn DemoInputCircuit-cycle []
+  (let [s (e/with-cycle [s ""]
+            (e/amb ; table
+              (Input s)
+              (Input s)))]
+    (dom/code (dom/text (pr-str s)))))
+
+(e/defn DemoInputCircuit4 [])
+
+(e/defn DemoInputCircuit5 [])
+
+(e/defn DemoInputCircuit6 []
+  (let [s (e/with-cycle [s ""]
+            (Input s :class "foo" :maxlength 100))]
+    (dom/code (dom/text (pr-str s)))))
+
+(def state0 {:user/str1 "hello" :user/num1 42 :user/bool1 true})
+
+(e/defn DemoFormSync []
+  (let [!m (atom state0) m (e/watch !m)
+        {:keys [user/str1 user/num1 user/bool1]} m]
+    (reset! !m
+      {:user/str1 (Input str1)
+       :user/num1 (-> (Input num1 :type "number") parse-long)
+       :user/bool1 (Checkbox bool1)})
+    (dom/pre (dom/text (pr-str m)))))
+
+(e/defn DemoFormSync-cycle []
+  (let [m (e/with-cycle [m state0]
+            (let [{:keys [user/str1 user/num1 user/bool1]} m]
+              {:user/str1 (Input str1)
+               :user/num1 (-> (Input num1 :type "number") parse-long)
+               :user/bool1 (Checkbox bool1)}))]
+    (dom/pre (dom/text (pr-str m)))))
+
+(e/defn Fiddles []
+  {`InputCicruit InputCicruit
+   `DemoInputNaive DemoInputNaive
+   `DemoInputCircuit-uncontrolled DemoInputCircuit-uncontrolled
+   `DemoInputCircuit-controlled DemoInputCircuit-controlled
+   `DemoInputCircuit-amb DemoInputCircuit-amb
+   `DemoInputCircuit-cycle DemoInputCircuit-cycle
+   `DemoInputCircuit4 DemoInputCircuit4
+   `DemoInputCircuit5 DemoInputCircuit5
+   `DemoInputCircuit6 DemoInputCircuit6
+   `DemoFormSync DemoFormSync
+   `DemoFormSync-cycle DemoFormSync-cycle})-e 
+
+
+./webview1.cljc:
+
+(ns electric-tutorial.webview1
+  (:require #?(:clj [datascript.core :as d]) ; server database
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]))
+
+#?(:clj
+   (defonce conn ; state survives reload
+     (doto (d/create-conn {:order/email {}})
+       (d/transact! ; test data
+         [{:order/email "alice@example.com" :order/gender :order/female}
+          {:order/email "bob@example.com" :order/gender :order/male}
+          {:order/email "charlie@example.com" :order/gender :order/male}]))))
+
+#?(:clj (defn teeshirt-orders [db ?email]
+          (sort-by :order/email
+            (d/q '[:find [(pull ?e [:db/id :order/email :order/gender]) ...]
+                   :in $ ?needle :where
+                   [?e :order/email ?email]
+                   [(clojure.string/includes? ?email ?needle)]]
+              db (or ?email "")))))
+
+(e/defn Teeshirt-orders [db search]
+  (e/server (e/diff-by identity (e/Offload #(teeshirt-orders db search)))))
+
+(declare css)
+(e/defn Webview1 []
+  (e/client
+    (dom/style (dom/text css))
+    (let [db (e/server (e/watch conn))  ; reactive "database value"
+          search (dom/input (dom/props {:placeholder "Filter..."})
+                   (dom/On "input" #(-> % .-target .-value) ""))
+          ids (Teeshirt-orders db search)] ; IO encapsulation - e/server not visible
+      (dom/table
+        (e/for [{:keys [db/id order/email order/gender]} ids]
+          (dom/tr
+            (dom/td (dom/text id))
+            (dom/td (dom/text email))
+            (dom/td (dom/text gender))))))))
+
+(def css "
+.user-examples-target table { display: grid; column-gap: 1ch; }
+.user-examples-target tr { display: contents; }
+.user-examples-target table {grid-template-columns: repeat(3, max-content);}")-e 
+
+
+./svg.cljc:
+
+(ns electric-tutorial.svg
+  (:require
+   [hyperfiddle.electric3 :as e :refer [$]]
+   [hyperfiddle.electric-dom3 :as dom]
+   [hyperfiddle.electric-svg3 :as svg]))
+
+(defn wave [time]
+  (Math/cos (/ (* (mod (Math/round (/ time 10)) 360) Math/PI) 180)))
+
+(e/defn SVG []
+  (e/client
+    (let [offset (* 3 (wave ($ e/System-time-ms)))] ; js animation clock
+      (svg/svg (dom/props {:viewBox "0 0 300 100"})
+        (svg/circle
+          (dom/props {:cx 50 :cy 50 :r (+ 30 offset)
+                      :style {:fill "#af7ac5 "}}))
+        (svg/g
+          (dom/props {:transform
+                      (str "translate(105,20) rotate(" (* 3 offset) ")")})
+          (svg/polygon (dom/props {:points "30,0 0,60 60,60"
+                                   :style {:fill "#5499c7"}})))
+        (svg/rect
+          (dom/props {:x 200 :y 20 :width (+ 60 offset) :height (+ 60 offset)
+                      :style {:fill "#45b39d"}}))))))-e 
+
+
+./reagent_interop.cljc:
+
+(ns electric-tutorial.reagent-interop
+  #?(:cljs (:require-macros [electric-tutorial.reagent-interop :refer [with-reagent]]))
+  (:require [hyperfiddle.electric :as e]
+            [hyperfiddle.electric-dom2 :as dom]
+            #?(:cljs [reagent.core :as r])
+            #?(:cljs ["recharts" :refer  [ScatterChart Scatter LineChart Line
+                                          XAxis YAxis CartesianGrid]])
+            #?(:cljs ["react-dom/client" :as ReactDom])))
+
+#?(:cljs (def ReactRootWrapper
+           (r/create-class
+            {:component-did-mount (fn [this] (js/console.log "mounted"))
+             :render (fn [this]
+                       (let [[_ Component & args] (r/argv this)]
+                         (into [Component] args)))})))
+
+#?(:cljs (defn create-root
+           "See https://reactjs.org/docs/react-dom-client.html#createroot"
+           ([node] (create-root node (str (gensym))))
+           ([node id-prefix]
+            (ReactDom/createRoot node #js {:identifierPrefix id-prefix}))))
+
+#?(:cljs (defn render [root & args]
+           (.render root (r/as-element (into [ReactRootWrapper] args)))))
+
+(defmacro with-reagent [& args]
+  `(dom/div  ; React will hijack this element and empty it.
+     (let [root# (create-root dom/node)]
+       (render root# ~@args)
+       (e/on-unmount #(.unmount root#)))))
+
+;; Reagent World
+(defn TinyLineChart [data]
+  #?(:cljs
+     [:> LineChart {:width 400 :height 200 :data (clj->js data)}
+      [:> CartesianGrid {:strokeDasharray "3 3"}]
+      [:> XAxis {:dataKey "name"}]
+      [:> YAxis]
+      [:> Line {:type "monotone", :dataKey "pv", :stroke "#8884d8", :strokeWidth 2}]
+      [:> Line {:type "monotone", :dataKey "uv", :stroke "#82ca9d", :strokeWidth 2}]]))
+
+(defn MousePosition [x y]
+  #?(:cljs
+     [:> ScatterChart {:width 300 :height 300
+                       :margin #js{:top 20, :right 20, :bottom 20, :left 20}}
+      [:> CartesianGrid {:strokeDasharray "3 3"}]
+      [:> XAxis {:type "number", :dataKey "x", :unit "px", :domain #js[0 2000]}]
+      [:> YAxis {:type "number", :dataKey "y", :unit "px", :domain #js[0 2000]}]
+      [:> Scatter {:name "Mouse position",
+                   :data (clj->js [{:x x, :y y}]), :fill "#8884d8"}]]))
+
+;; Electric Clojure
+
+(e/defn ReagentInterop []
+  (e/client
+    (let [[x y] (dom/on! js/document "mousemove"
+                         (fn [e] [(.-clientX e) (.-clientY e)]))]
+      (with-reagent MousePosition x y) ; reactive
+      ;; Adapted from https://recharts.org/en-US/examples/TinyLineChart
+      (with-reagent TinyLineChart
+        [{:name "Page A" :uv 4000 :amt 2400 :pv 2400}
+         {:name "Page B" :uv 3000 :amt 2210 :pv 1398}
+         {:name "Page C" :uv 2000 :amt 2290 :pv (+ 6000 (* -5 y))} ; reactive
+         {:name "Page D" :uv 2780 :amt 2000 :pv 3908}
+         {:name "Page E" :uv 1890 :amt 2181 :pv 4800}
+         {:name "Page F" :uv 2390 :amt 2500 :pv 3800}
+         {:name "Page G" :uv 3490 :amt 2100 :pv 4300}]))))-e 
+
+
+./webview_column_picker.md:
+
+# Rejecting "Functional Core Imperative Shell" — Webview column picker <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+Here we add to the previous tutorial a dynamic column picker component in 7 LOC, and then we discuss the meta implications of this with respect to how software is architected today.
+
+!ns[electric-tutorial.webview-column-picker/WebviewColumnPicker]()
+
+What's happening
+* dynamic column picker
+* table is responsive to column selection
+* IO reflows automatically
+
+Closer look: what's really happening in the `Column Picker` impl?
+
+!fn-src[electric-tutorial.webview-column-picker/ColumnPicker]()
+
+reflect on `;reactive ui w/ inline dom!`: this 7 LOC column picker expresses so much in so little code
+* DOM writes - maintain a collection of checkboxes
+* DOM reads - collecting values derived from events
+* data transformation and processing
+* everything is reactive
+* everything composes as functions
+* the user's call convention is just a function call (+ implicit `dom/node` in dynamic scope)
+* *local reasoning*: no tangled spaghetti code, when refactoring everything is all in the same place. same file, same function, *same expression*!
+
+Is it "functional core, imperative shell"?
+* No, it is not! The effects are on the *inside*!
+
+Does that mean it's imperative?
+
+* Is the programmer explicitly coordinating **statement order?** **NO**, the Electric DAG is doing that, Electric is declarative with respect to statement order, Electric will auto-maximize concurrency at every point, racing everything based on the DAG so you don't have to think about statements.
+* Is the DOM node final location determined by **statement order** of DOM effects? **NO**, electric-dom is responsible for the *positioning and ordering* of elements based on natural AST order (top to bottom, left to right). In other words, the checkbox element mount effects are **concurrent in time and yet ordered in space**, ultimately streaming into their proper final location in the DOM regardless of the time ordering in which the effects ran.
+* Can the system be **left in a broken state** if an exception occurs like other imperative systems? **NO**, missionary's RAII semantics guarantee that the resource destructor chain is called
+* **Conclusion: NO, Electric is not imperative.**
+
+Is the computation pure functional?
+* Classically no, effects are interleaved throughout the entire program, which is a DAG and that DAG contains both pure pipeline stages and effectful stages.
+* But the effects are managed by the effect system. The equivalent Haskell program would be pure. Electric is a syntax transform over the exact same computation, which in Haskell would be considered pure.
+* So is it pure, or not? **Does it really matter?**
+
+Meta theme: **"fake separation of concerns"**
+* React.js says: HTML and JS should be interleaved actually, the business concern is "view"
+* Tailwind says: HTML and CSS should be interleaved actually, the business concern is "layout"
+* Electric says: Frontend and Backend should be interweaved actually, the business concern is "UI"
+* Electric-dom says: DOM effects and view logic should be interweaved actually, for a similar authoring experience to that of React but more composable/powerful/expressive, and probably faster in the end too (React has had a decade of optimization work, our implementation is still naive!)
+
+
+**"Functional core, imperative shell" is wrong**. The proof is in the pudding: our [TodoMVC implementation](/tutorial/todomvc) is 200 LOC *including the backend*. I challenge anyone who disputes these claims to replicate this ColumnPicker demo, or TodoMVC or any other demo, using any technology of their choice. Let's count LOC and see which is easier to understand and maintain. I built the ColumnPicker in 20 minutes, on a whim, because it felt like a cool idea to try. How many LOC is it in your favorite framework, how long will it take to build?-e 
+
+
+./file_watcher.md:
+
+-e 
+
+
+./fizzbuzz.cljc:
+
+(ns electric-tutorial.fizzbuzz
+  (:require [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer [Input*]]))
+
+(defn clamp [n min max] (Math/min (Math/max n min) max))
+
+(e/defn RangeN [n]
+  (e/diff-by identity (range 1 (inc n)))) ; unsited expr (i.e., dynamically sited)
+
+(declare css)
+(e/defn FizzBuzz []
+  (e/client
+    (let [fizz (Input* "fizz")
+          buzz (Input* "buzz")
+          n (-> (Input* 10 :type "number" :min "0" :max "100")
+              parse-long (clamp 0 100))
+          ns (RangeN n) ; differential collection
+          xs (e/for [n ns] ; materialize individual elements from collection diffs
+               (cond
+                 (zero? (mod n (* 3 5))) (str fizz buzz)
+                 (zero? (mod n 3)) fizz
+                 (zero? (mod n 5)) buzz
+                 :else n))]
+      fizz buzz ; force lazy let statements otherwise sampled conditionally!
+      (e/Tap-diffs xs) ; see console
+      (e/for [x xs]
+        (dom/div (dom/text x))))))-e 
+
+
+./two_clocks.cljc:
+
+(ns electric-tutorial.two-clocks
+  (:require [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]))
+
+(e/defn TwoClocks []
+  (e/client
+    (let [c (e/client (e/System-time-ms))
+          s (e/server (e/System-time-ms))]
+      (dom/div (dom/text "client time: " c))
+      (dom/div (dom/text "server time: " s))
+      (dom/div (dom/text "skew: " (- s c))))))-e 
+
+
+./amb.md:
+
+# e/amb — concurrent values in superposition <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Amb is classically is a multiplexing primitive, representing **concurrent evaluation**, as seen in [SICP's amb operator](https://sarabander.github.io/sicp/html/4_002e3.xhtml) and also [Verse](https://simon.peytonjones.org/assets/pdfs/verse-conf.pdf).
+* We've found that in UI, `(e/amb)` is an important primitive for representing concurrent reactive processes, and it is foundational in Electric v3.
+* If you understand most of this page, you'll know enough to understand the <a href="/tutorial/form_explainer">form tutorial</a> where we use `e/amb` to collect concurrent form edit commands from the user.
+
+!fn[electric-tutorial.inputs-local/DemoInputCircuit-amb]()
+
+What's happening
+* The two inputs are bound to the same state `s`, but how?
+* `s'` is a "table" (i.e., ambiguous "multi-value").
+* This table `s'` contains two values in superposition!, almost like a tuple
+* There is only one `reset!`, `(reset! !s s')`, which is run when *either* or *any* of the values in table `s'` change!
+
+`(e/amb)` holds an ordered collection of values in superposition
+
+* **superposition:** `(e/amb 1 2)` evaluates to a value representing *both* the `1` and the `2` in superposition, in the same value, at the same time.
+* **flattening:** `(e/amb 1 (e/amb 2 3) (e/amb))` evaluates to `(e/amb 1 2 3)`
+* **Nothing:** `(e/amb)` means "Nothing", i.e., zero values in superposition
+* **Singular values are lifted:** `(println 1)` and `(println (e/amb 1))` are identical, as are `(let [x 1] (println x))` and `(let [x (e/amb 1)] (println x))`
+
+Auto-mapping
+
+* `(inc (e/amb 1 2))` evaluates to `(e/amb 2 3)` - the `inc` is auto-mapped over the table
+* `(prn (inc (e/amb 1 2)))` will print `2` `3` — the `prn` ran twice, as did the `inc`! This is called **auto-mapping**
+* In the form example, `(reset! !s s')` will run the expression *for each* value in table `s'`
+
+Why are amb values called "tables" in Electric?
+
+* This is a SQL analogy: most SQL operators, such as `SELECT`, operate on tables/sets of records, not individual records.
+* This is a similar concept as "vector" from [vector programming languages](https://en.wikipedia.org/wiki/Array_programming) such as MATLAB, but (speaking to MATLAB) it is not quite the right concept. In mathematics, vectors store related quantities which transform together under changes in coordinate basis, such as rotations. Electric tables are not this.
+* All electric expressions and scopes (lexical and dynamic) evaluate/resolve to tables that hold zero or more values in superposition (typically one).
+
+Tables are reactive at element granularity, unlike clojure vectors/tuples
+
+* i.e., tables are differential collections
+* so, `(println (e/amb 1 (e/watch !b)))` will print twice (`1` and `b`) on initial boot, and subsequently never print `1` again, printing only `b` when it changes
+* in other words, `println` will auto-map across the table, and the **auto-mapping happens element-wise on *changes*!**
+
+How is the table `(e/amb 1 2)` different from the Clojure vector `[1 2]`?
+
+* Electric tables are incrementally maintained data structures and are reactive at the granularity of the individual element.
+* use `e/as-vec` to **materialize** a `clojure.core/vector` from the incremental Electric table (by reducing over the flow of diffs!)
+  * `(e/as-vec (e/amb 1 2))` returns `[1 2]`
+* Once you have a Clojure vector, you've **lost reactivity at element granularity**, so there's really not much you can do with it other than print it (i.e. debugging), or use `e/diff-by` to diff it back into a reactive collection.
+
+**Tables are not a data type**, they are built into the language itself as part of it's evaluation model.
+
+* In `(let [x (e/amb 1)] ...)`, table `x` is a differential collection of length 1
+* In `(let [x 1] ...)` — this expression is identical! literal `1` is auto-lifted into a table, and table `x` is a differential collection of length 1.
+* Why? Because Electric's network wire protocol needs to be aware of the diffs, and this impacts the backpressure semantics of the language itself.
+
+Connection with `e/for`
+
+* Tables are what `e/diff-by` returns, and what `e/for` iterates over.
+* `(e/diff-by identity [1 2])` evaluates to `(e/amb 1 2)`
+* `(e/for [x (e/amb 1 2)] (prn (inc x))` will print `2` `3`.
+* The `e/for` is isolating the branches of the e/amb so you can think about them one at a time.
+* Yes, that means `(reset! !s (e/amb 1 2))` could be written equivalently as `(e/for [x (e/amb 1 2)] (reset! !s x))`, which I would consider more idiomatic.
+
+Then why is `e/for` needed at all, given the language's auto-mapping semantics? Is there any difference between
+* `(let [x (e/amb 1 2)] (dom/text x))` and
+* `(e/for [x (e/amb 1 2)] (dom/text x))` ?
+* YES, here `e/for` will allocate *two* dom/text objects, but `let` will allocate *one* dom/text object, and *update it twice*! (The two dom writes race, last one wins.)
+* Quiz: What if we replace `dom/text` with `println`? A: In that case there will be no externally visible difference, because `println` does not allocate a resource that needs to be freed, so there is no difference between *mounting it twice* vs *mounting it once and updating it twice*.
+
+Another example. What's happening here?
+```
+(e/for [x (e/amb 1 2)]
+  (let [!a (atom 0)]
+    (reset! !a x)))
+```
+* Two atoms are created, each is reset once: `e/for` mounts a branch with `x` bound to `(e/amb 1)` and another branch with `x` bound to `(e/amb 2)`.
+* Now replace `e/for` with `let`, you get two resets on a single atom.
+* So, `e/for` affects **resource allocation** semantics. **Do you want two objects, or one object with multiple updates sent to it?**
+
+Auto-mapping is really about **cartesian products**:
+```
+(list (e/amb 1 2 3)) ; auto mapping
+; (e/amb (1) (2) (3))
+
+(list (e/amb 1 2 3) (e/amb :a :b)) ; cross product
+; (e/amb (1 :a) (1 :b) (2 :a) (2 :b) (3 :a) (3 :b))
+```
+
+* Todo: this requires further elaboration.
+* Basically since the language is differential, we're automapping over *changesets*. So if we add a `:c` to `(e/amb :a :b)`, we need to incrementally maintain the resulting expression by adding `:c` for each of `(e/amb 1 2 3)`, which is a product over the changeset: `(1 :c) (2 :c) (3 :c)`.
+* This implies that the collections are held in memory so that `1 2 3` can be reconstructed. True! Reactive programming is a time-space tradeoff - you cache more stuff to recompute less stuff.
+
+In the next tutorial (Temperature Converter), we will use `e/amb` in a real world UI to efficiently gather state from concurrent processes.
+
+## Advanced
+
+There's a surprising interaction between product semantics and `if`. Consider:
+```
+(e/as-vec
+  (let [x (e/amb 1 2 3)]
+    (if (odd? x)
+      x
+      (e/amb))))
+
+; [1 2 3 1 2 3]   -- wtf
+```
+* This does not seem to be a semantically interesting or useful result.
+* What's happening is, Electric `if`'s current implementation interacts badly with auto-mapping (product) semantics:
+  * `(if (e/amb true false true) (e/amb 1 2 3) (e/amb))`
+  * `if` will be called 9 times, `(e/amb true false true)` X `(e/amb 1 2 3)`
+  * `true` branches return `x` - six times
+  * `false` branches return `(e/amb)` - three times
+  * i.e. something like: `(e/amb (e/amb 1 2 3) (e/amb) (e/amb 1 2 3))`, where the middle `false`/`2` branch has been elided.
+* Conclusion: `if` produces useful results today only when used with singular values. When used with non-singular values, you will get wide products which don't seem useful. Instead, **use `e/for` to narrow down your tables to individual values**, which is very natural. The cartesian product semantics of the language are not often needed from userland.
+* We acknowledge the semantics gap here, we're still exploring and figuring out the right semantics. [Verse](https://simon.peytonjones.org/assets/pdfs/verse-conf.pdf)'s if operator has more useful semantics, for example. Future work! The current semantics, despite being sometimes surprising, are at least well defined and consistent.-e 
+
+
+./lifecycle.cljc:
+
+(ns electric-tutorial.lifecycle
+  (:require [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]))
+
+(e/defn BlinkerComponent []
+  (e/Tap-diffs #(prn 'mount %) ::x) ; see console
+  (dom/h1 (dom/text "blink!"))
+  (println 'mount)
+  (e/On-unmount #(println 'unmount)))
+
+(e/defn Lifecycle []
+  (e/client
+    (e/Tap-diffs #(prn 'when %) ; see console
+      (when (zero? (mod (e/System-time-secs) 2))
+        (BlinkerComponent)))))
+-e 
+
+
+./chat_monitor.md:
+
+# Simple chat app with optimistic updates <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* A multiplayer chat app with auth and presence, all in one file.
+* When multiple sessions are connected, you can see who else is present.
+* Try two tabs
+
+!ns[electric-tutorial.chat-monitor/ChatMonitor]()
+
+What's happening
+
+* Chat messages are stored in an atom on the server
+* It's multiplayer, each connected session sees the same messages
+* Auth – log in (empty password)
+* Presence – logged in users can see who else is in the room (try two tabs)
+* Messages submit on enter keypress (and clear the input)
+* All connected clients see new messages immediately
+* The background flashes yellow when something is loading
+
+Why does each connected client receive realtime updates?
+
+* the server global state atom is shared by all clients connected to that server, because they share the same JVM.
+* each client get's its own "electric process", bound to the websocket session
+* `(e/def msgs ...)` is global, therefore shared across all sessions (same JVM)
+* other than shared global state, the server instances are independent. All sesison state is isolated and bound to the websocket session, just as HTTP request handlers are bound to a request.
+
+regular web server
+
+* Electric's websocket can be hosted by any ordinary Clojure web server, you provide this.
+* App server for this app: `[server_httpkit.clj]()` or `[server_jetty.clj]()` (todo - it's in the starter kit)
+  * it hosts a websocket
+  * it has a `/auth` endpoint configured with HTTP Basic Auth, specifically for this tutorial.
+* Note the server is application code, it's not provided by the Electric library dependency.
+* Why is the server not included by Electric? Because it has hardcoded http routes and auth examples. This is userland concern.
+* You should start with the starter app and modify it.
+
+auth is same as any other web app
+
+* you have access to the request, cookies, etc
+* `e/http-request` is the ring request that established the websocket connection.
+* it is injected in the `[process entrypoint]()` (todo) where it is passed by server argument to your `[electric app root]()` (todo), where your app entrypoint binds it into dynamic scope.
+* Sorry, it's not automatic anymore, dependency injection is a userland concern.
+* Use this pattern to inject any additional dependencies from Clojure (or just use a global, or just instantiate resources in your Electric program.)
+
+`InputCreateSubmit?!`
+* Read the docstring, study the implentation
+* It uses the dom/On-all concurrent tokens API to support submitting a rapid sequence of messages, clearing the input after each submit, without waiting for each individual message to complete.
+* Note there's no error handling / retry state, which is why this implementation is "dubious" and we marked it as `?!`. It's fine to use if you don't care about error handling. (What does Slack even do if a message fails? Apple's iMessage handles this correctly, affording a retry state on the optimistic list entry.)
+* `dom/node` (used in the Input impl): the live dom node, maintained in dynamic scope for local point writes
+* JavaScript interop (via ClojureScript): everything works as expected, direct DOM manipulation is no problem, and idiomatic
+
+Edits - `(e/for [[t msg] edits] ...)`
+* `[t v]` (token, value) – this is an important idiom we will use often for server RPC, encoding into this simple token value the lifecycle of a transaction:
+  1. an edit has been requested and an input is dirty;
+  2. the ability to mark the edit as accepted `(t)`
+  3. or mark it rejected via the second arity `(t err)` which sends the error back to the place that issued the edit
+* Note, `edits` as a value represents N concurrent in-flight edits, with fine grained reactivity on each individual edit value, for correct lifecycle tracking on each edit. When the edit's token is spent, that edit collapses out of the reactive collection without disturbing the others.
+
+"Pending" aka "Busy" state
+
+* When you send a message and one or more server effects are pending, the input flashes yellow
+* Pending is no longer modeled as an exception as it was in v2, for now we are managing this state in userland very specifically.
+* two kinds of latency in Electric - query side and command side
+* Here, we are interested only in the command side. We want busy state when messages are sent to the server, but NOT during page load.
+* `InputSubmitCreate?!` `L49` automatically sets the `{:aria-busy true}` attribute on the input, which is turned yellow with userland css e.g. `L96`
+* So the style's extent is the duration of the server edits. Once all edits are accepted, the busy style is cleared.
+
+
+
+Pending
+
+
+
+`(e/with-cycle* first [edits (e/amb)] ...)`
+* note the `*` and the `first`, this is not `e/with-cycle`
+* this is a temporary hack
+* we need a cycle primitive that cycles tables, not just clojure values
+
+Optimistic updates
+* `!` inputs return requested next state as an `edit` i.e. `[t v]`
+* Loop the edits locally
+* edits fed into query
+* query interprets edits, merging them into the previous collection value
+* Edit eventually succeeds, txn is cleared `(t)`, pending state falls out of query
+* Nice!
+
+Let's formalize this pattern!-e 
+
+
+./todomvc_composed.md:
+
+# TodoMVC Composed <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+!ns[electric-tutorial.todomvc-composed/TodoMVC-composed]()
+-e 
+
+
+./todos.md:
+
+# Todos Simple (WIP) <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Point of this demo is to demonstrate optimistic create-new with failure handling (retry) on all possible states. If you don't care about failure handling, then there is a much better implementation possible (without nesting a form).
+* Unfortunately, we didn't finish implementing the failure states yet (as of October 20 2024).
+* I think it otherwise works
+
+!ns[electric-tutorial.todos/Todos]()
+
+What's happening
+* It's a functional todo list, the first "real app"
+* Submit remote txn on enter and clear (e.g. **Chat**, **TodoMVC**, i.e. create new entity). Uncontrolled!
+
+Structure of app (todo elaborate)
+
+* Create new form - auto-submit false, genesis true
+  * input
+* Item form - auto-submit true, this has the retry state
+  * Item status form - auto-submit true
+    * checkbox
+  * Item desc form - auto-submit false
+    * input
+
+Key ideas
+
+* dependency injection
+* dynamic scope
+* unserializable reference transfer - `d/transact!` returns an unserializable ref which cannot be moved over network, when this happens it is typically unintentional, so instead of crashing we warn and send `nil` instead.
+* nested transfers, even inside a loop
+* query diffing
+
+
+# Scratch
+
+* implies optimistic collection maintenance
+* failure is routed to the optimistic input for retry, it is not handled here!
+* https://clojurians.slack.com/archives/C7Q9GSHFV/p1735567091092959-e 
+
+
+./forms_inline.md:
+
+# Forms with inline submit <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Sometimes, you want to submit each field individually (NOT as a form)
+* e.g. iOS preferences, or settings page in a b2b saas.
+* Just wrap each `Input!` field it's own `Form!`, due to the concurrent `e/amb` structure, the inline forms will interact with the server concurrently without any further effort:
+
+!ns[electric-tutorial.forms-inline/Forms-inline]()
+
+* For this demo, we don't let you fully suppress the buttons (see: `(or (Checkbox show-buttons* :label "show-buttons") ::cqrs/smart)`), but you can just set `:show-buttons` to `false` in your app to make them go away entirely and rely only on the keyboard - which is often what you want! (For example, TodoMVC, Slack)
+
+### Keyboard support
+
+* Try it above! select the numeric field, `up`/`down`, `enter` to submit, `esc` to discard.
+* Go to the top of the page - toggle the checkbox - esc to discard - space to toggle again - enter in any field to submit form - button turns yellow and disabled.
+* Note: yes, enter in *any* field will submit *all* fields in the form.
+* But - you're actually used to that! We use tab to navigate a form, and we use enter to submit it at the end.
+* These are in fact the native browser semantics being exposed, i.e. we didn't implement this behavior! We just setup the DOM properly. I believe the only think we implemented is to submit when buttons are hidden, i.e. there is no `<button type="submit">` in the form.
+* If you want to prevent premature submit, add validation.
+-e 
+
+
+./form_list.md:
+
+# Form composition <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* very simple demo showing forms composing as values in a list
+
+!ns[electric-tutorial.form-list/FormList]()
+
+What's happening
+* now it's a list of forms, bound to the same server entity
+* the two forms are sent to the server concurrently
+* server states, dirty/failure/retry etc all work-e 
+
+
+./webview2.cljc:
+
+(ns electric-tutorial.webview2
+  (:require #?(:clj [dustingetz.teeshirt-orders-datascript :refer
+                     [ensure-db! teeshirt-orders genders shirt-sizes]])
+            #?(:clj [datascript.core :as d])
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [electric-tutorial.typeahead :refer [Typeahead]]))
+
+(e/defn Genders [db search]
+  (e/server (e/diff-by identity (e/Offload #(genders db search)))))
+
+(e/defn Shirt-sizes [db gender search]
+  (e/server (e/diff-by identity (e/Offload #(shirt-sizes db gender search)))))
+
+(e/defn Teeshirt-orders [db search & [sort-key]]
+  (e/server (e/diff-by identity (e/Offload #(teeshirt-orders db search sort-key)))))
+
+(e/defn GenericTable [cols Query Row]
+  (let [ids (Query)] ; server query
+    (dom/table
+      (e/for [id ids]
+        (dom/tr
+          (let [m (Row id)]
+            (e/for [k cols]
+              (dom/td
+                (e/call (get m k))))))))))
+
+(e/defn Row [db id]
+  (let [!e         (e/server (e/Offload #(d/entity db id)))
+        email      (e/server (-> !e :order/email))
+        gender     (e/server (-> !e :order/gender :db/ident))
+        shirt-size (e/server (-> !e :order/shirt-size :db/ident))]
+    {:db/id            (e/fn [] (dom/text id))
+     :order/email      (e/fn [] (dom/text email))
+     :order/gender     (e/fn [] (Typeahead gender
+                                  (e/fn Options [search] (Genders db search))
+                                  #_(e/fn OptionLabel [x] (pr-str x))))
+     :order/shirt-size (e/fn [] (Typeahead shirt-size
+                                  (e/fn Options [search] (Shirt-sizes db gender search))
+                                  #_(e/fn OptionLabel [x] (pr-str x))))}))
+
+
+#?(:cljs (def !sort-key (atom [:order/email])))
+
+(declare css)
+(e/defn Webview2 []
+  (e/client
+    (dom/style (dom/text css))
+    (let [db (e/server (ensure-db!))
+          colspec (e/amb :db/id :order/email :order/gender :order/shirt-size) ; reactive tuple
+          search (dom/input (dom/On "input" #(-> % .-target .-value) ""))]
+      (GenericTable
+        colspec
+        (e/Partial Teeshirt-orders db search (e/client (e/watch !sort-key)))
+        (e/Partial Row db)))))
+
+(comment
+  (reset! !sort-key [:db/id])
+  (reset! !sort-key [:order/shirt-size :db/ident]))
+
+(def css "
+.user-examples-target table { display: grid; column-gap: 1ch; }
+.user-examples-target tr { display: contents; }
+.user-examples-target table {grid-template-columns: repeat(4, max-content);}
+.user-examples-target { padding-bottom: 5em; /* room for picklist options */}")-e 
+
+
+./counter.cljc:
+
+(ns electric-tutorial.counter
+  (:require [clojure.math :refer [floor-div]]
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [missionary.core :as m]))
+
+(e/defn Countdown [from-n-inclusive dur-ms]
+  (let [left (+ (inc from-n-inclusive)  ; end on 1
+               (floor-div
+                 (- (e/snapshot (e/System-time-ms)) (e/System-time-ms))
+                 (/ dur-ms from-n-inclusive)))]
+    (if (neg? left) "⌛" left)))
+
+(e/defn Clicker [n F!]
+  (e/client
+    (println F!) ; serializable e/fn - see console
+    (dom/div
+      (dom/text "count: " n " ")
+      (dom/button (dom/text "inc")
+        (e/for [[t e] (dom/On-all "click")]
+          (dom/text " " (F! t)))))))
+
+#?(:clj (defonce !n (atom 0))) ; shared memory global state
+
+(e/defn Counter []
+  (let [n (e/server (e/watch !n))]
+    (Clicker n (e/fn [t]
+                 (case (e/server ({} (swap! !n (e/Task (m/sleep 2000 inc))) ::ok))
+                   ::fail nil         ; todo
+                   ::ok (e/client (t)))
+                 (Countdown 10 2000))))) ; progress indicator
+-e 
+
+
+./webview_column_picker.cljc:
+
+(ns electric-tutorial.webview-column-picker
+  (:require #?(:clj [dustingetz.teeshirt-orders-datascript :refer [ensure-db!]])
+            [electric-tutorial.webview2 :refer [Teeshirt-orders Row]]
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer [Checkbox*]]))
+
+(e/defn GenericTable [cols Query Row]
+  (let [ids (Query)]
+    (dom/table (dom/props {:style {:--colcount (e/Count cols)}}) ; css var
+      (e/for [id ids]
+        (dom/tr
+          (let [m (Row id)]
+            (e/for [k cols]
+              (dom/td
+                (e/call (get m k))))))))))
+
+(e/defn ColumnPicker [cols]
+  (e/client
+    (->> (e/for [col cols]
+           [col (Checkbox* true :label col)]) ; reactive ui w/ inline dom!
+      e/as-vec ; materialize clojure vector from diffs
+      (filter (fn [[col checked]] checked))
+      (map first) sort (e/diff-by identity)))) ; unmaterialize
+
+(declare css)
+(e/defn WebviewColumnPicker []
+  (e/client
+    (dom/style (dom/text css))
+    (let [db (e/server (ensure-db!))
+          colspec (dom/div (ColumnPicker (e/amb :db/id :order/email :order/gender :order/shirt-size)))
+          search (dom/input (dom/On "input" #(-> % .-target .-value) ""))]
+      (GenericTable
+        colspec
+        (e/Partial Teeshirt-orders db search nil)
+        (e/Partial Row db)))))
+
+(def css "
+.user-examples-target table { display: grid; column-gap: 1ch;
+  grid-template-columns: repeat(var(--colcount), max-content);
+  grid-template-rows: repeat(3, 24px); }
+.user-examples-target tr { display: contents; }
+.user-examples-target pre { align: bottom; }")-e 
+
+
+./form_service.cljc:
+
+(ns electric-tutorial.form-service
+  (:require #?(:clj [datascript.core :as d])
+            [dustingetz.trivial-datascript-form :refer
+             [#?(:clj ensure-conn!) #?(:clj transact-unreliable)]]
+            [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer [Form! Checkbox* Input! Checkbox!]]))
+
+(e/declare debug*)
+(e/declare slow*)
+(e/declare fail*)
+
+(e/defn UserFormServer [db id]
+  (dom/fieldset (dom/legend (dom/text "UserFormServer"))
+    (let [{:keys [user/str1 user/num1 user/bool1] :as m}
+          (e/server (d/pull db [:user/str1 :user/num1 :user/bool1] id))]
+      (Form! ; buffer and batch edits into an atomic form
+        (dom/dl
+          (e/amb
+            (dom/dt (dom/text "str1")) (dom/dd (Input! :user/str1 str1))
+            (dom/dt (dom/text "num1")) (dom/dd (Input! :user/num1 num1 :type "number" :parse parse-long))
+            (dom/dt (dom/text "bool1")) (dom/dd (Checkbox! :user/bool1 bool1))))
+        :commit (fn [dirty-form]
+                  (let [{:keys [user/str1 user/num1 user/bool1] :as m}
+                        (merge m dirty-form)]
+                    [[`User-form-submit id str1 num1 bool1] ; command
+                     {id m}])) ; prediction
+        :debug debug*))))
+
+(e/declare !conn)
+
+(e/defn User-form-submit [id str1 num1 bool1]
+  (e/server ; secure, validate command here
+    (let [tx [{:db/id id :user/str1 str1 :user/num1 num1 :user/bool1 bool1}]]
+      (e/Offload #(try (transact-unreliable !conn tx :fail fail* :slow slow*)
+                    ::ok ; sentinel
+                    (catch Exception e (doto ::fail (prn e))))))))
+
+(e/defn UserService [edits]
+  (e/client ; client bias, t doesn't transfer
+    (e/for [[t [effect & args :as form] guess] edits] ; concurrent edits
+      (let [res (case effect
+                  `User-form-submit (e/apply User-form-submit args)
+                  (prn 'unmatched effect))]
+        (case res
+          ::ok (t) ; sentinel, any other value is an error
+          (t res)))))) ; feed error back into control to prompt for retry
+
+(declare css)
+(e/defn FormsService []
+  (dom/style (dom/text css))
+  (binding [!conn (e/server (ensure-conn!))
+            debug* (Checkbox* true :label "debug")
+            slow* (Checkbox* true :label "latency")
+            fail* (Checkbox* true :label "failure")]
+    debug* fail* slow*
+    (let [db (e/server (e/watch !conn))
+          edits (UserFormServer db 42)]
+      (UserService edits))))
+
+(def css "
+[aria-busy=true] {background-color: yellow;}
+[aria-invalid=true] {background-color: pink;}")-e 
+
+
+./timer.cljc:
+
+(ns electric-tutorial.timer
+  (:require
+   [hyperfiddle.electric3 :as e :refer [$]]
+   [hyperfiddle.electric-dom3 :as dom]))
+
+(def initial-goal 10) ; seconds
+(defn seconds [milliseconds] (/ (Math/floor (/ milliseconds 100)) 10))
+(defn second-precision [milliseconds]
+  (-> milliseconds (/ 1000) (Math/floor) (* 1000))) ; drop milliseconds
+
+(defn now [] #?(:cljs (second-precision (js/Date.now))))
+
+(e/defn Timer []
+  (let [!goal (atom initial-goal), goal (e/watch !goal), goal-ms (* 1000 goal)
+        !start (atom (now)), start (e/watch !start)
+        time (min goal-ms (- (second-precision ($ e/System-time-ms)) start))]
+    (dom/div
+      (dom/props {:style {:display "grid", :width "20em", :grid-gap "0 1rem", :align-items "center"}})
+      (dom/span (dom/text "Elapsed time:"))
+      (dom/progress (dom/props {:max goal-ms, :value time, :style {:grid-column 2}}))
+      (dom/span (dom/text (seconds time) " s"))
+      (dom/span (dom/props {:style {:grid-row 3}}) (dom/text "Duration: " goal "s"))
+      (dom/input
+        (dom/props {:type "range", :min 0, :max 60, :style {:grid-row 3}})
+        ($ dom/On "input" (fn [e] (->> e .-target .-value parse-long (reset! !goal))) nil))
+      (dom/button
+        (dom/text "Reset")
+        (dom/props {:style {:grid-row 4, :grid-column "1/3"}})
+        ($ dom/On "click" (fn [_] (reset! !start (now))) nil)))))
+-e 
+
+
+./backpressure.md:
+
+# Backpressure and Concurrency <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+"UI is a concurrency problem" — Leo Noel
+
+This is just the Two Clocks demo with slight modifications, there is more to learn here.
+
+!ns[electric-tutorial.backpressure/Backpressure]()
+
+What's happening
+* The timer `e/system-time-secs` is a float and updates at the browser animation rate, let's say 120hz.
+* Clocks are printed to both the DOM (at 120hz) and also the browser console (at 1hz)
+* The clocks pause when the browser page is not visible (i.e. you switch tabs), confirm it **[todo electric v3]**
+
+Key ideas
+* **work-skipping**: expressions are only recomputed if an argument actually changes, otherwise the previous value is reused. Here, the truncated clock timer does not needlessly spam the prn; downstream nodes are only recomputed on the transition.
+* **signals**: Electric reactive functions model *signals*, not *streams*. Streams are like mouse clicks or database transactions – you can't skip one. Signals are like mouse coordinates, audio signals or game animations – you mostly only care about latest, nobody wants an animation frame from 2 seconds ago.
+* **the reactive clocks are lazy**: the clocks do not tick until the previous tick was *sampled* (i.e. consumed). That means if the rendering process falls behind the requestAnimationFrame tick rate, it will simply skip frames like a video game.
+* **lazy sampling**: All electric expressions are lazily sampled, not just the clocks. Electric fns don't compute anything at all until sampled by the Electric entrypoint.
+
+Low-level concurrency control
+
+* If/when you do want to play at the functional reactive layer underneath Electric, we have the right trapdoors for that.
+* `e/System-time-ms` is implemented using Missionary. It's too advanced to show here, but inside this function we use Missionary to implement an efficient backpressured clock that only ticks when someone is looking. Low level concurrency control at every point in the computation is a first class feature of Electric.
+* With respect to types: if everything's reactive, nothing's reactive, all the FRP types cancel out. With Electric you will never make a type error related to async vs sync types; forget about them.
+
+Clock details
+* `e/system-time-secs` is implemented as a missionary flow.
+* on the client, the underlying clock is implemented with `requestAnimationFrame` such that it only schedules work once the current tick has been sampled.
+* That means, if you switch to another tab, the browser will stop scheduling animation frames and the clock will pause.
+* The server clock is implemented similarly, it will tick as fast as possible but only when sampled. If nobody is consuming the clock — i.e. no websockets are connected — the clock will not tick at all!
+
+Work-skipping
+* We use `int` to truncate the precision. The truncation is performed at 120hz, as we want to switch *precisely* on the rising edge of the transition.
+* Since `int` is recomputing at 120hz, that means anything immediately downstream will be checked 120 times per second
+  * so both `(prn "s" (int s))` and `(- s c)` are both checked at 120hz
+* However, expressions only run if at least one argument has changed
+* So, at this point the memoization kicks in and we will skip the work, this is called "work-skipping"
+* `(prn "s" (int s))` prints at 1hz not 120hz
+
+Lazy sampling
+* Q: Truncating at 120hz is inefficient right? Why not use `(js/setTimeout 1000)` to make a slower clock?
+* A: Actually, the fast clock is efficient due to Electric's backpressure.
+* If the rendering process can't keep up with the requestAnimationFrame tick rate, it will simply skip frames, and this will actually slow down the clock because the clock itself is lazy too.
+* This is a form of backpressure. See [Streams vs Signals](https://www.dustingetz.com/#/page/signals%20vs%20streams%2C%20in%20terms%20of%20backpressure%20%282023%29)
+* Note: Computers can do 3D transforms in realtime, running this little clock at the browser animation rate is negligible.
+* If your computer is powered on and plugged in, you generally want to render at the highest framerate the device is capable of. This is Electric's default behavior out of the box.
+
+Backpressure
+* What if you're on an old mobile device that can't keep up with the server clock streaming?
+  * In this case, incoming messages from server will saturate the websocket buffer,
+  * then the browser will propagate backpressure at the TCP layer,
+  * then the server will decrease the *sampling rate*.
+* Same behavior in the opposite direction (e.g if the client generates lots of events and the server is overloaded).
+* See: [Signals vs Streams, in terms of backpressure](https://www.dustingetz.com/#/page/signals%20vs%20streams%2C%20in%20terms%20of%20backpressure%20%282023%29)
+* Electric is a Clojure to [Missionary](https://github.com/leonoel/missionary) compiler; it compiles lifts each Clojure form into a Missionary continuous flow.
+* Thereby automatically backpressuring every point in the Electric DAG.
+* If you want to customize the backpressure locally at any point — maybe you want to run a chat view with realtime network but run a slow query less aggressively — you can drop down into missionary's rich suite of concurrency combinators.
+
+Beginners can get away with pretending your program is a Clojure program for a bit, but you'll eventually need to reason about Electric programs as DAGs†:
+
+* Each expression, e.g. `(- s c)`, is a node in the DAG.
+* Expression arguments (e.g. `s`) are edges in the DAG.
+* Electric `let` binds names (e.g. `s`) to evaluation results in the DAG, and memoizes the result for sharing and reuse in multiple downstream consumers (i.e. expressions).
+* So for example, node `(- s c)` has:
+  * three incoming edges `- s c`, and
+  * one outgoing edge—the result—consumed by `(dom/text "skew: " _)`
+  * So, if `s` changes, `(- s c)` is recomputed using memoized `c`, and then the `dom/text` reruns (a point write).-e 
+
+
+./form_explainer.md:
+
+# Transactional server forms <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* server commands / transactions / RPC (i.e., "http post")
+* forms with dirty and error states with latency and failure affordances
+
+!ns[electric-tutorial.form-service/FormsService]()
+
+What's happening
+
+* transactional/RPC form post, with commit/discard buttons
+* controlled state bound to database record
+* dirty fields turn yellow, discard to reset
+* uncommitted state is *staged*, you can continue to arrange it until you submit
+* on submit, commit button turns yellow while you wait
+* inflight commit can be cancelled - try quickly cancelling an inflight txn before it succeeds (there is a 500ms delay)
+* failed commits turn commit button red, retaining dirty state (i.e., **uncommitted state is never lost**)
+* failed commits can be retried
+
+Let's focus just on the form code itself, `UserFormServer`, repeated here:
+
+!fn-src[electric-tutorial.form-service/UserFormServer]()
+
+`(Input! :user/str1 str1)` - a transactional input w/ server awareness
+
+* Inputs are named (here `:user/str1`), as with the DOM: `<input name="foo">`
+* when the form submission fails (submit button turns red), the `Input!` stays yellow, because they still hold uncommitted state!
+
+* How can we delay a commit until we are ready? `Input!` is missing a **buffering** primitive and **submit** intent
+* How can we retry a failed edit? Again, `Input!` is missing a **submit** intent
+* ... i.e., just `Input!` is not enough to model that. We need a **Form**
+
+`Form!` - transactional form with error states
+
+* we use `e/amb` to collect the individual field edits
+* `Form!` - introduces a *buffer* for dirty edits!
+  * ... which implies `commit` and `discard` intentions, afforded as buttons
+  * we retain buffered edits until the commit succeeds, or user discards
+  * the form buffer is shown when `:debug true`
+* `:commit` is how you merge a set of field edits into a single server command
+  * <code>[[`User-form-submit id str1 num1 bool1] {id m}]</code>
+  * element 0 is a command request
+  * element 1 is our local prediction of the outcome of the command, presuming success - used by optimistic updates.
+  * Why is the command encoded as data? Because it helps with optimistic updates, this may not be the final factoring.
+* debug flag - todo explain
+
+Here is the command:
+
+!fn-src[electric-tutorial.form-service/User-form-submit]()
+
+Which the service interprets and evaluates:
+
+!fn-src[electric-tutorial.form-service/UserService]()
+
+* `guess` is ignored, this is used to implement optimistic updates which we haven't shown yet.
+* **Failure handling with retry affordance** - since the form is buffering the edits, if the commit fails, we just don't clear the buffer!
+* How does failure propagate from service back into the form buttons?
+  * `(t ::rejected)` routes the error back to the source (e.g. the commit button) so the button can turn red (maybe put the error in a tooltip) and reset to a ready state for the user to try again.
+-e 
+
+
+./inputs_local.md:
+
+# Inputs <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Before we discuss forms, we first need to understand Inputs.
+* Electric provides two input patterns – **synchronous local inputs** and **async transactional inputs**, which satisfy two different use cases.
+* Here we discuss the former, sync local inputs.
+
+### naive low-level DOM input – uncontrolled state
+
+Warmup and for reference, the low-level input that you're already familiar with.
+
+!fn[electric-tutorial.inputs-local/DemoInputNaive]()
+
+* dom/on - derive a state (latest value, or signal from the FRP perspective) from a sequence of events
+* recall that dom elements return their last child via implicit do
+
+### synchronous `Input` - uncontrolled state
+
+* Ephemeral local state
+* Very simple
+* No error states, no latency
+
+!fn[electric-tutorial.inputs-local/DemoInputCircuit-uncontrolled]()
+
+### synchronous `Input` – controlled state
+
+!fn[electric-tutorial.inputs-local/DemoInputCircuit-controlled]()
+
+* Observe two `reset!` effects
+
+### synchronous forms
+
+!fn[electric-tutorial.inputs-local/DemoFormSync]()
+
+* Why are they ordered? I think we're getting lucky with the reader (todo explain)
+* It's just an educational demo, vector them if you want
+* One problem here is the clojure data structure (map, vector etc) will destroy fine grained reactivity at element level, propagating form change batches from that point rather than individual field changes even when only one field changes. We're about to do better.-e 
+
+
+./system_properties.md:
+
+# System Properties <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* A larger example of a HTML table backed by a server-side query.
+* Type into the input and see the query update live.
+* Goal here is to understand basic client/server data flow in a simple query/view topology.
+
+!ns[electric-tutorial.system-properties/SystemProperties]()
+
+What's happening
+
+* There's a HTML table on the frontend, backed by a backend "query" `jvm-system-properties`
+* The backend query is an ordinary Clojure function that only exists on the server, which works because this is an ordinary `.cljc` file.
+* Typing into the frontend input causes the backend query to rerun and update the table.
+* There's a reactive for loop to render the table - `e/for`
+* The view code deeply nests client and server calls, arbitrarily, even through loops.
+
+Ordinary Clojure/Script functions work
+* `clojure.core/defn` works as it does in Clojure/Script, it's still a normal blocking function and is opaque to Electric. Electric does not mess with the `clojure.core/defn` macro.
+* **query can be any function**: return collections, SQL resultsets, whatever
+
+direct query/view composition
+* `jvm-system-properties`, a server function, composes directly with the frontend DOM table.
+* Thus unifying your code into one paradigm, promoting readability, and making it easier to craft complex interactions between client and server components, maintain and refactor them.
+
+e/for, e/diff-by
+
+* The table rows are renderered by a for loop. Reactive loops are efficient and recompute branches only precisely when needed.
+* `e/for`: a reactive map operator that works on electric v3's "reactive collections" (kinda, we will sharpen this later).
+* `(e/diff-by key system-props)` constructs a "reactive collection" from a regular Clojure collection. `key` (c.f. [React.js key](https://stackoverflow.com/questions/28329382/understanding-unique-keys-for-array-children-in-react-js/43892905#43892905)) is a function that identifies a stable entity in a collection as it evolves over time as the query results update. Collection elements with the same identity will be reconciled and reuse the same location in the reactive collection, which here is mirrored to the DOM.
+* Note, the pattern `(e/for [[k v] (e/server (e/diff-by key system-props))] ...)` implies collection diffs on the wire! When the query result changes, only the *differences* are moved, not the *entire collection*.
+
+Simple free text input
+* **callback free**: `(dom/On "input" #(-> % .-target .-value) ""))` returns the current value of the input as a reactive value (i.e., a *signal* from the FRP perspective). `""` is the initial state of the signal.
+* the clojure lambda is an extractor function which needs to be written in Clojure not Electric because of the DOM's OOP semantics. If you wrote it like `(-> (dom/On "input" identity "") .-target .-value)`, because the `.-target` reference is the same with each event, `(.-value target)` will work skip.
+* cycle by side effect - we're using an atom to loop the input value higher in lexical scope. Super common idiom, more on this later.
+* **Note we're cycling values directly – there are no callbacks!**
+* `e/watch`: derives a reactive flow from a Clojure atom by watching for changes using the `clojure.core/add-watch` subscription API.
+
+Reactive for details
+
+* `e/for` ensures that each table row is bound to a logical element of the collection, and only touched when a row dependency changes.
+* Notice there is a `println` inside the for loop. This is so you can verify in the browser console that it only runs when its arguments change. Open the browser console now and confirm for yourself:
+  * On initial render, each row is rendered once
+  * Slowly input "java.class.path"
+  * As you narrow the filter, no rows are recomputed. (The existing dom is reused, so there is nothing to recompute because, for those rows, neither `k` nor `v` have changed.)
+  * Slowly backspace, one char at a time
+  * As you widen the filter, rows are computed as they come back. That's because they were unmounted and discarded!
+  * Quiz: Try setting an inline style "background-color: red" on element "java.class.path". When is the style retained? When is the style lost? Why?
+
+Network transfer can be reasoned about clearly
+
+* values are only transferred between sites when and if they are used. The `system-props` collection is never actually accessed from a client region and therefore never escapes the server.
+* Look at which remote scope values are closed over and accessed.
+* Only remote access is transferred. Mere *availability* in scope does not transfer.
+* In the `e/for`, `k` and `v` exist in a server scope, and yet are accessed from a client scope.
+* Electric tracks this and sends a stream of individual `k` and `v` updates over network.
+* The collection value `system-props` is not accessed from client scope, so Electric will not move it. Values are only moved if they are accessed.
+
+FAQ: "It seems scary that Electric blurs the lines between client and server?"
+* I reject "blurs the line", in our opinion the boundary is *precise and clear*
+* In fact, Electric v3 allows the programmer to draw much more intricate boundaries than ever before
+* **Electric is a surgical tool offering *tremendous precision* in how we specify network state distribution - it is not "blurry"**
+
+Network transparent composition is not the heavy, leaky abstraction you might think it is
+
+* The DAG representation of the program makes this simple to do
+* The electric core implementation is about 3000 LOC
+* Function composition laws are followed, Electric functions are truly functions.
+  * Functions are an abstract mathematical object
+  * Javascript already generalizes from function -> async function (`async/await`) -> generator function (`fn*/yield`)
+  * Electric generalizes further: stream function -> reactive function -> distributed function
+* With Electric, you can refactor across the frontend/backend boundary, all in one place, without caring about any plumbing.-e 
+
+
+./reagent_interop.md:
+
+# Reagent Interop
+
+Reagent (React.js) embedded inside Electric. The reactive mouse coordinates cross from Electric to Reagent via props.
+
+!fiddle-ns[](electric-tutorial.reagent-interop/ReagentInterop)
+-e 
+
+
+./chat_monitor.cljc:
+
+(ns electric-tutorial.chat-monitor
+  (:require [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer [Form! Input!]]))
+
+(e/defn Login [username]
+  (dom/div
+    (if (some? username)
+      (dom/text "Authenticated as: " username)
+      (dom/a (dom/props {:href "/auth"})
+        (dom/text "Set login cookie (blank password)")))))
+
+#?(:clj (defonce !present (atom {}))) ; session-id -> user
+
+(e/defn Presence! [!present username]
+  (e/server
+    (let [session-id (get-in e/http-request [:headers "sec-websocket-key"])]
+      (swap! !present assoc session-id (or username "anon"))
+      (e/on-unmount #(swap! !present dissoc session-id)))
+    (e/diff-by key (e/watch !present))))
+
+(e/defn Present [present]
+  (dom/div (dom/text "Present: " (e/Count present)))
+  (dom/ul
+    (e/for [[_ username] present]
+      (dom/li (dom/text username)))))
+
+#?(:clj (defonce !db (atom (repeat 10 nil)))) ; multiplayer
+(e/defn Query-chats [] (e/server (e/diff-by :db/id (e/watch !db))))
+#?(:clj (defn send-message! [msg] (swap! !db #(take 10 (cons msg %)))))
+(defn ->msg-record [username msg & [tempid]]
+  {:db/id (or tempid (random-uuid)) :username username :msg msg})
+
+
+(e/defn Query-chats-optimistic [username edits]
+  (prn 'edits (e/as-vec edits))
+  ; Hack in optimistic updates; we'll formalize a better pattern in Todos tutorial
+  (let [server-xs (e/server (Query-chats)) ; reuse server query (differential!)
+        client-xs (e/for [[t cmd local-index] edits] ; cheap optimistic updates
+                    (let [m (get local-index t)] ; token as tempid convention
+                      (assoc m ::pending true)))]
+    ; todo reconcile records by id for count consistency and fix flicker
+    (e/amb client-xs server-xs))) ; e/amb is differential concat here
+
+(e/defn Channel [msgs]
+  (dom/ul (dom/props {:class "channel"})
+    ; Our very naive optimistic update impl here means the query can return more
+    ; than 10 elements, so we use a css fixed height with overflow-y:clip so we
+    ; don't have to bother maintaining the length of the query.
+    (e/for [{:keys [username msg ::pending]} msgs] ; render list bottom up in CSS
+      (dom/li (dom/props {:style {:visibility (if (some? msg) "visible" "hidden")
+                                  :grid-template-columns "1fr 1fr"}})
+        (dom/props {:aria-busy pending})
+        (dom/span (dom/strong (dom/text username)) (dom/text " " msg))
+        (dom/span (dom/props {:style {:text-align "right"}})
+          (dom/text (if pending "pending" "ok")))))))
+
+(e/defn SendMessageInput [username]
+  (Form! (Input! ::msg "" :disabled (nil? username)
+           :placeholder (if username "Send message" "Login to chat"))
+    :show-buttons false ; enter to submit
+    :genesis true ; immediately consume form, ready for next submit
+    :commit (fn [{msg ::msg} tempid] (prn 'TodoCreate-commit msg)
+              [[`Create-todo username msg]
+               {tempid (->msg-record username msg tempid)}])))
+
+(e/defn ChatApp [username present edits]
+  (e/amb
+    (Present present)
+    (dom/hr (e/amb)) ; silence nil
+    (Channel (Query-chats-optimistic username edits))
+    (SendMessageInput username)
+    (Login username)))
+
+(e/defn Create-todo [username msg]
+  (e/server ; secure, validate command here
+    (let [record (->msg-record username msg)] ; secure
+      (e/Offload #(try (Thread/sleep 500) ; artificial latency
+                    (send-message! record) ::ok
+                    (catch Exception e (doto ::rejected (prn e))))))))
+
+(declare css)
+(e/defn ChatMonitor []
+  (dom/style (dom/text css))
+  (let [username (e/server (get-in e/http-request [:cookies "username" :value]))
+        present (e/server (Presence! !present username))
+        edits (e/with-cycle* first [edits (e/amb)] ; loop in-flight edits
+                (ChatApp username present edits))]
+    (prn 'edits (e/as-vec edits))
+    (e/for [[t [cmd & args] guess] (e/Filter some? edits)]
+      (let [res (e/server
+                  (case cmd
+                    `Create-todo (e/apply Create-todo args)
+                    (prn ::unmatched-cmd)))]
+        (case res
+          ::ok (t)
+          ::fail nil))))) ; for retry, we're not done yet - todo finish demo
+
+; .user-examples-target.Chat [aria-busy=true] { background-color: yellow; }
+(def css "
+[aria-busy=true] {background-color: yellow;}
+.user-examples-target.ChatMonitor ul.channel li,
+.user-examples-target.Chat ul.channel li { display: grid; }
+.user-examples-target.Chat ul.channel,
+.user-examples-target.ChatMonitor ul.channel {
+    display: flex; flex-direction: column-reverse; /* bottom up */
+    height: 220px; overflow-y: clip; /* pending pushes up server records */
+    padding: 0; /* remove room for bullet in grid layout */ }")-e 
+
+
+./todomvc_composed.cljc:
+
+(ns electric-tutorial.todomvc-composed
+  (:require [hyperfiddle.electric3 :as e]
+            [hyperfiddle.electric-dom3 :as dom]
+            [hyperfiddle.electric-forms3 :refer [Service effects*]]
+            [electric-tutorial.todomvc :as todomvc :refer
+             [TodoMVC-UI Effects !state state state0
+              db Transact! #?(:clj !conn)]]))
+
+(e/defn PopoverCascaded [i F]
+  (dom/div (dom/props {:style {:position "absolute"
+                               :left (str (* i 40) "px")
+                               :top (str (-> i (* 40)) "px")}})
+    (dom/props {:style {:z-index (+ i (if (dom/Mouse-over?) 1000 0))}})
+    (F)))
+
+(e/defn TodoMVC-composed []
+  (e/client
+    (dom/link (dom/props {:rel :stylesheet, :href "/todomvc.css"}))
+    (dom/props {:class "todomvc" :style {:position "relative"}})
+    (binding [!state (atom state0)]
+      (binding [state (e/watch !state)]
+        (binding [db (e/server (e/watch !conn))
+                  Transact! (e/server (e/Partial Transact! !conn (e/client (::todomvc/delay state))))
+                  effects* (Effects)]
+          (Service
+            (e/with-cycle* first [edits (e/amb)]
+              (e/Filter some?
+                (e/for [i (e/amb 1 2 3)]
+                  (PopoverCascaded i
+                    (e/Partial TodoMVC-UI db state edits)))))))))))-e 
+
+
+./temperature2.md:
+
+# e/amb — Temperature Converter <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Here we demonstrate `e/amb` as a way to efficiently gather state from concurrent processes
+
+!ns[electric-tutorial.temperature2/Temperature2]()
+
+What's happening
+* We've removed the atom, and particularly the `reset!` from all three places. **Now there is only one `reset!`**
+* Instead of `reset!`, "events" (kinda) flow upwards towards the app root as *values*
+* `e/amb` is being used inside dom containers (e.g. `dl`) to gather concurrent states from concurrent input controls (i.e., **concurrent processes!**)
+
+In this demo, we use `e/amb` to accumulate user interaction state and propagate it to the app root via the return path
+
+* `Input` returns its (singular) state in superposition
+* On L20, `e/amb` collects values from the two Inputs (which return singular states i.e. `(e/amb 0)` (degrees celcius)) and the two dom/texts (which return Nothing, i.e. `(e/amb)`)
+* resulting in `(e/amb (e/amb) (e/amb 0) (e/amb) (e/amb 0))` = `(e/amb 0 0)`, the state of the two inputs, multiplexed
+* In effect, collecting *concurrent* states from the DOM and propagating them back up to the app root via return path.
+* `(dom/dd)` returns the last child (recall the dom containers wrap children in implicit `do`)
+* similarly, `dom/dt` returns it's last child (the text), and `(dom/text "Celcius")` returns `(e/amb)`
+
+FAQ: Why not use `[]` to collect DOM states instead of `e/amb`?
+
+* Because `[]` is not a differential operator, `e/amb` is reactive at the granularity of each individual element.
+* each element of the e/amb is an independent process (here, independent dom elements are modeled as individual processes running concurrently, each returning its state)
+* e/amb is also syntactically convenient, giving a new ability to return Nothing (or, nothing *yet*!)-e 
+
+
+./typeahead.md:
+
+-e 
+
+
+./webview2.md:
+
+# Webview2 <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+demonstration of Electric Lambda
+
+!ns[electric-tutorial.webview2/Webview2]()
+
+What's happening
+* Typeahead - we will explain this later, pulling this forward for the cool demo
+* sorting (REPL only - see talk)
+* dynamic columns (REPL only - see talk)
+* typeahead options support filtering, which happens on the **server** (i.e., support for large collections)
+
+Discussion of IO patterns
+* This was the topic of [Talk: Electric Clojure v3: Differential Dataflow for UI (Getz 2024)](https://hyperfiddle-docs.notion.site/Talk-Electric-Clojure-v3-Differential-Dataflow-for-UI-Getz-2024-2e611cebd73f45dc8cc97c499b3aa8b8), now is a good time to watch it before moving on to the next demo, which is a followup from the talk.
+* Typeahead does IO but encapsulates it!
+
+**24 LOC** typeahead implementation
+* Note: this is not a production-grade typeahead, this is a tutorial demo. We have better ones now
+
+!fn-src[electric-tutorial.typeahead/Typeahead]()
+
+Performance notes (updated 2024 Dec 22)
+* ~~Yes there's some flicker, v3 is slower than v2 right now~~
+  * flicker is fixed, remaining jank is layout shift due to lazy css coding, todo improve css
+* ~~You might assume we're IO bound – we're not actually, this demo is CPU bound~~
+  * flicker is fixed
+
+Here is the datascript model, if you're coding along:
+
+!ns-src[dustingetz.teeshirt-orders-datascript]()-e 
+
+
+./custom_serialization.cljc:
+
+(ns electric-tutorial.custom-serialization
+  (:require [hyperfiddle.electric3 :as e]))
+
+(deftype CustomType [x])
+
+#?(:clj (defmethod print-method CustomType [obj writer]
+          (.write writer "#CustomType[")
+          (print-method (.-x obj) writer)
+          (.write writer "]"))
+   :cljs (extend-protocol IPrintWithWriter
+           CustomType
+           (-pr-writer [object writer opts]
+             (-write writer "#CustomType[")
+             (-pr-writer (.-x object) writer opts)
+             (-write writer "]"))))
+
+(e/defn CustomTypes []
+  (let [client-obj (e/client (CustomType. :client))
+        server-obj (e/server (CustomType. :server))]
+    (e/client (prn server-obj))
+    (e/server (prn client-obj))))
+
+
+(comment ; Adapt your entrypoint (bidirectional serialization is optional)
+  (ns dev #_prod
+    #?(:clj (:import [electric-tutorial.custom-serialization CustomType]))
+    (:require [hyperfiddle.electric3 :as e]
+     #?(:cljs hyperfiddle.electric3-client)
+     #?(:cljs [electric-tutorial.custom-serialization :refer [CustomType]])
+     cognitect.transit))
+
+  (e/boot-server {:cognitect.transit/read-handlers {"hello-fiddle.fiddles/CustomType" (cognitect.transit/read-handler (fn [[x]] (CustomType. x)))}
+                  :cognitect.transit/write-handlers {CustomType (cognitect.transit/write-handler (constantly "hello-fiddle.fiddles/CustomType") (fn [obj] [(.-x obj)]))}}
+    ProdMain (e/server ring-req))
+
+  (e/boot-client {:cognitect.transit/read-handlers {"hello-fiddle.fiddles/CustomType" (cognitect.transit/read-handler (fn [[x]] (CustomType. x)))}
+                  :cognitect.transit/write-handlers {CustomType (cognitect.transit/write-handler (constantly "hello-fiddle.fiddles/CustomType") (fn [obj] [(.-x obj)]))}}
+    ProdMain (e/server nil)))-e 
+
+
+./timer.md:
+
+# 7 GUIs 4: Timer
+
+See <https://eugenkiss.github.io/7guis/tasks#timer>
+
+!ns[electric-tutorial.timer/Timer]()
+-e 
+
+
+./webview_diffs.md:
+
+# Webview diffs <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Let's take a closer look at the webiew diffs (prerequisite: [fizzbuzz tutorial](/tutorial/fizzbuzz))
+
+!ns[electric-tutorial.webview-diffs/WebviewDiffs]()
+
+What's happening
+* dynamic column picker, same as before
+* diffs are tapped in two places: 
+  * table row diffs 
+  * table column diffs
+
+Todo write about the diffs. Please ask questions in the slack thread to help me write this!-e 
+
+
+./two_clocks.md:
+
+# Two Clocks <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* The easiest way to understand Electric is **streaming lexical scope**.
+* Here, the server clock is streamed to the client.
+
+!ns[electric-tutorial.two-clocks/TwoClocks]()
+
+What's happening
+
+* Two clocks, one on the client, one on the server, we compute the skew.
+* The server clock streams to the client over websocket.
+* The expression is **multi-tier** (i.e., full-stack) – it has frontend parts and backend parts.
+* The Electric compiler infers the backend/frontend boundary and generates the full-stack app (concurrent client and server processes that coordinate).
+* **Network "data sync"† is automatic and invisible.** (†I do not like the framing "data sync" because it implies *synchronization*, i.e. the reconciliation of two separate mutable stores which have conflicting views as to what is true. This is not how Electric works! More on that later.)
+* When a clock updates, the **reactive** view incrementally recomputes to stay consistent, keeping the DOM in sync with the clocks. Both the frontend and backend parts of the function are reactive.
+
+Syntax
+
+* `c` and `s` are both stream and value, you can think of it either way. **streaming lexical scope**! (Technically the underlying FRP datatype is not stream, rather signal.)
+* `e/client` `e/server` - these "site macros" are compile time markers, valid in any Electric fn body.
+* `e/defn` defines an Electric function, which is reactive. `e/defn` is a macro containing a complete Clojure analyzer and compiler; it compiles this Electric code down to Clojure & ClojureScript target code. That means at runtime there are two processes, a frontend and a backend that communicate by websocket.
+* Each Electric expression e.g. `(- c s)` is async/reactive. That means all expressions are recomputed when any input argument updates. There is reactive/FRP type machinery under the hood, provided by [Missionary](https://github.com/leonoel/missionary), which is a **functional effect system** (i.e., framework for concurrency and IO - competitive with core.async).
+
+Network transparency
+
+* Electric functions are **network-transparent**: they transmit data over the network (as implied by the AST) in a way which is invisible to the application programmer. See: [Network transparency (wikipedia)](https://en.wikipedia.org/wiki/Network_transparency)
+* The network is reactive too!, at the granularity of individual scope values.
+* When server clock `s` updates, the new value is streamed over network, bound to `s` on the client, write through to dom.
+* This is not RPC (request/response), that would be too slow. The server streams `s` without being asked, because it knows the client depends on it. If the client had to request each server clock tick, the timer would pause visibly between each request, which would be too slow.
+* **Everything is already async, so adding a 10ms websocket delay does not add impedance**, complexity or code weight! This is the central insight of Electric. For a 10min video explainer, see [UIs are streaming DAGs (2022)](https://hyperfiddle.notion.site/UIs-are-streaming-DAGs-e181461681a8452bb9c7a9f10f507991). It's important that you get comfortable with this idea, so please watch the talk!
+
+Reactive DOM
+
+* DOM rendering happens on client, there is no server side rendering. **DOM rendering is effectful**, through point mutations, like `dom/text` here. In v3, the dom macros understand (at runtime) their relative location in your program's runtime DAG and use that knowledge to mount and update themselves in the appropriate place in the DOM. So when `c` updates, `(dom/text "client time: " c)` will issue a point write to the DOM at this expression's corresponding place in the DOM.
+* **DOM rendering is free**: there is no React.js, no virtual dom, no reconciler, no DOM diffing. Electric is already fully reactive at the programming language level so there is no need. electric-dom is straightforward machinery to translate Electric change streams into dom mutations.
+* If you do need to interop with React.js ecosystem components, it's just javascript, feel free to do so, a React bridge is about 30 lines of code.
+* FAQ: **Can you use Electric from ClojureScript only** without a server and websocket (e.g. as a React.js replacement)? Yes, as of v3 this is officially supported!
+
+Electric function call convention
+
+* `(e/System-time-ms)` is an Electric function call. **Electric functions *must* be capitalized (as of v3).**
+* Electric is Clojure-compatible, so we have to differentiate Clojure function calls `(f)` from Electric function calls `(F)`. Due to Clojure being dynamically typed, there's no static information available for the compiler to infer the right call convention in this case.
+* Reagent has a call convention too; in Reagent we denote component calls with square brackets `[F]` (as React does with JSX `<F>`). This syntax distinguishes between calling component functions vs ordinary fns. To help remember, Reagent/React users capitalize their component functions.
+* The Electric compiler, as of v3 makes this convention mandatory. In Electric v3, a capitalized function name (first letter) denotes an Electric call and not a Clojure call. This is an experiment, if it blows up too many pre-existing Clojure macros maybe we revert to v2 syntax `(F.)` or UIX syntax `($ F)`. The compiler maintains a whitelist regex of edge cases, such as gensym's `G__1`.
+* FAQ: Why do we need syntax to call Electric fns, Electric has an analyzer, why not just use metadata on the var? A: Because lambdas. Electric expressions can call both Electric lambdas and ordinary Clojure lambdas, e.g. `(dom/On "input" #(-> % .-target .-value) "")`. Electric is a compiler and needs to know the call convention at compile time. Vars are available at compile time, but lambda values are only known at runtime. However, Electric could use var metadata to disambiguate the static call case, which would further reduce collision surface area (todo implement).
+
+Clojure/Script compatibility
+
+* `(- c s)` is a ClojureScript function call (i.e. `-` is ClojureScript's minus).
+* Electric is **"99%" Clojure/Script compatible** (i.e., to a reasonable extent - including syntax, defmacro, collections & datatypes, destructuring, host interop, most of clojure.core, etc).
+* To achieve this, Electric implements an actual Clojure/Script analyzer and implements all ordinary Clojure special forms.
+* That means, most any valid Clojure or ClojureScript expression, when pasted into an Electric body, will evaluate to the same result, and produce the same side effects (though not necessarily in the same statement order).
+* Therefore, many pre-existing Clojure/Script macros unaware of Electric will work (e.g. `core.match` works), to the extent that their macroexpansion is referentially transparent (i.e. does not rely on runtime mutation or host concurrency, thread stuff including `future` and `push-thread-bindings`, etc).
+* **It's just Clojure!**
+
+Electric is a reactivity compiler
+
+* Electric has a DAG-based reactive evaluation model for fine-grained reactivity. Unlike React.js, Electric reactivity is granular to the expression level, not the function level.
+* Electric uses macros to compile actual Clojure syntax into a DAG, using an actual Clojure/Script analyzer inside `e/defn`.
+* After performing macroexpansion, Electric essentially **reinterprets** Clojure syntax forms under reactive semantics.
+* **Electric is not rewriting your code or tampering with your macroexpansion**, it is *reinterpreting your actual code* under new reactive evaluation rules which, in the case of referentially transparent (RT) expressions, will produce the same output result for the same inputs as the original Clojure evaluation rules (with different runtime time/space tradeoff).
+* Under this new interpretation, Electric compiles your program down into very different Clojure/Script target code – a RT Missionary program/expression composed of many thousands of pure functional Missionary operators.
+
+There is an isomorphism between programs and DAGs
+
+* you already knew this, if you think about it – for example, [call graph (wikipedia)](https://en.wikipedia.org/wiki/Call_graph)
+* The Electric DAG is an abstract representation of your program
+* The DAG contains everything there is to know about the **flow of data ("dataflow")** through the Electric program's **control flow** structures
+* Electric uses this DAG to drive reactivity, so we sometimes call the DAG a "reactivity graph".
+* But in theory, this DAG is abstract and there could be evaluated (interpreted or compiled) in many ways.
+* E.g., in addition to driving reactivity, Electric uses the DAG to drive network topology, which is just a graph coloring problem.-e 
+
+
+./fizzbuzz.md:
+
+# Differential FizzBuzz <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+* Electric v3 implements differential dataflow for UI.
+* Goal: start to think about this differential structure.
+* Open js console and start incrementing the `10` to see cool diffs
+
+!ns[electric-tutorial.fizzbuzz/FizzBuzz]()
+
+What's happening
+* as you change the input state, the collection output is incrementally maintained
+* L27 `(e/Tap-diffs xs)` is printing diffs to the console as `xs` updates
+* The computation is differential - diffs propogating through each expression
+
+Diffs!
+
+* `{:degree 12, :permutation {}, :grow 1, :shrink 0, :change {11 "fizz"}, :freeze #{}}`
+  * `:grow 1` - incremental instruction to grow the collection by 1 element
+  * `:change {11 "fizz"}` - incremental instruction to set the value of element at an index in the collection
+
+`e/diff-by` inside `RangeN` is the source of these diffs
+* `diff-by`'s return value is a reactive collection, kinda. We will explain later, for now let's just pretend there is a reactive collection type.
+* The reactive collection is represented as a flow of diffs.
+* The `RangeN` electric function, from the FRP perspective, is not returning values, it's actually returning a sequence of diffs!
+* The diffs flow through each expression in the Electric DAG, incrementally maintaining the computation as it goes.
+* `e/for` is interpreting the diffs (basically looking for `:grow` and `:shrink`) to **mount** or **unmount** concurrent branches of the `for` body
+* Yes, this is analogous to the React lifecyle methods, except mount/unmount is not collection aware but grow/shrink is!
+* These grow/shrink instructions are propagated all the way to the DOM.
+* The reified collection does not exist anywhere in userland, it's diffs all the way to the DOM. The only place you can see the realized collection is in the DOM itself.
+
+Application code is the same as you're used to
+* The differential structures are internal, userland never sees them unless you use Tap-diff, which is implemented with special forms.
+
+`;force lazy let statements otherwise sampled conditionally!`
+* Electric `let` bindings are evaluated lazily - when sampled
+* here, bindings `fizz` and `buzz` are sampled conditionally - see both `cond` and `e/for`
+* That means their side effects (i.e., writing to the DOM) might not happen
+* Touch them inside an implicit `do` to force these effects – the `do` is sampled unconditionally
+
+Best place to learn more is [Electric Clojure v3: Differential Dataflow for UI (Getz 2024)](https://hyperfiddle-docs.notion.site/Talk-Electric-Clojure-v3-Differential-Dataflow-for-UI-Getz-2024-2e611cebd73f45dc8cc97c499b3aa8b8). This is a good talk, I spent 3 weeks preparing it, please watch it! The next few tutorials will be a bit sparse because they are covered by the talk.-e 
+
+
+./todomvc.md:
+
+# TodoMVC <span id="title-extra"><span>
+
+<div id="nav"></div>
+
+!ns[electric-tutorial.todomvc/TodoMVC]()
+
+FAQ
+
+* **How can the todo edit be cancelled upon clicking away?** We'd need a more complicated dom strategy for click away, i think our production combobox has this now. that modal edit state has a lot in common semantically with a popover, it may actually be a semantic popover with inline layout strategy-e 
+
