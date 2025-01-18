@@ -47,15 +47,15 @@
                               :cursor           "pointer"}})
           (dom/text "Execute")
           (dom/On "click" (fn [_] (reset! !result (str text1 text2)))
-            nil))
+            nil)))
 
         ;; Right column
-        (dom/div (dom/props {:style {:width "50%"}})
-          (dom/textarea
-            (dom/props {:style    {:width         "100%"
-                                   :height        "100%"
-                                   :padding       "0.5rem"
-                                   :border        "1px solid #ccc"
-                                   :border-radius "4px"}
-                        :readOnly true})
-            (dom/text result)))))))
+      (dom/div (dom/props {:style {:width "50%"}})
+        (dom/textarea
+          (dom/props {:style    {:width         "100%"
+                                 :height        "100%"
+                                 :padding       "0.5rem"
+                                 :border        "1px solid #ccc"
+                                 :border-radius "4px"}
+                      :readOnly true})
+          (dom/text result))))))
